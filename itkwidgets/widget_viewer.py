@@ -12,7 +12,7 @@ import time
 import itk
 import numpy as np
 import ipywidgets as widgets
-from traitlets import CBool, CFloat, Unicode, CaselessStrEnum, Tuple, List, TraitError, validate
+from traitlets import CBool, CFloat, CInt, Unicode, CaselessStrEnum, Tuple, List, TraitError, validate
 from .trait_types import ITKImage, itkimage_serialization
 try:
     import ipywebrtc
@@ -157,13 +157,28 @@ class Viewer(ViewerParent):
     shadow = CBool(default_value=True, help="Use shadowing in the volume rendering.").tag(sync=True)
     slicing_planes = CBool(default_value=False, help="Display the slicing planes in volume rendering view mode.").tag(sync=True)
     gradient_opacity = CFloat(default_value=0.2, help="Volume rendering gradient opacity, from (0.0, 1.0]").tag(sync=True)
+    size_limit_2d = List(CInt(), default_value=[2048, 2048], help="Size limit for 2D image visualization.").tag(sync=False)
+    size_limit_3d = List(CInt(), default_value=[256, 256, 256], help="Size limit for 3D image visualization.").tag(sync=False)
+    _downsampling = CBool(default_value=False, help="We are downsampling the image to meet the size limits.").tag(sync=True)
     roi = List(List(CFloat()),
             default_value=[[0., 0., 0.], [0., 0., 0.]],
             help="Region of interest: ((lower_x, lower_y, lower_z), (upper_x, upper_y, upper_z))").tag(sync=True)
 
     def __init__(self, **kwargs):
         super(Viewer, self).__init__(**kwargs)
-        self._update_rendered_image()
+        dimension = self.image.GetImageDimension()
+        size = self.image.GetLargestPossibleRegion().GetSize()
+        if dimension == 2:
+            for dim in range(dimension):
+                if size[dim] > self.size_limit_2d[dim]:
+                    self._downsampling = True
+        else:
+            for dim in range(dimension):
+                if size[dim] > self.size_limit_3d[dim]:
+                    self._downsampling = True
+        if self._downsampling:
+            self.shrinker = itk.BinShrinkImageFilter.New(self.image)
+        self.update_rendered_image()
         self.observe(self.update_rendered_image, ['image'])
 
     @debounced(delay_seconds=0.4, method=True)
@@ -173,7 +188,28 @@ class Viewer(ViewerParent):
     def _update_rendered_image(self):
         if self.image is None:
             return
-        self.rendered_image = self.image
+        if self._downsampling:
+            region = self.image.GetLargestPossibleRegion()
+            size = region.GetSize()
+            dimension = self.image.GetImageDimension()
+
+            def find_shrink_factors(limit):
+                shrink_factors = self.shrinker.GetShrinkFactors()
+                for dim in range(dimension):
+                    shrink_factors[dim] = 1
+                    while(int(np.floor(float(size[dim]) / shrink_factors[dim])) > limit[dim]):
+                        shrink_factors[dim] += 1
+                return shrink_factors
+
+            if dimension == 2:
+                shrink_factors = find_shrink_factors(self.size_limit_2d)
+            else:
+                shrink_factors = find_shrink_factors(self.size_limit_3d)
+            self.shrinker.SetShrinkFactors(shrink_factors)
+            self.shrinker.UpdateLargestPossibleRegion()
+            self.rendered_image = self.shrinker.GetOutput()
+        else:
+            self.rendered_image = self.image
 
     @validate('gradient_opacity')
     def _validate_gradient_opacity(self, proposal):
