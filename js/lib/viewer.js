@@ -42,6 +42,7 @@ const ViewerModel = widgets.DOMWidgetModel.extend({
       cmap: 'Viridis (matplotlib)',
       shadow: true,
       slicing_planes: false,
+      roi_widget: false,
       gradient_opacity: 0.2,
       roi: [[0., 0., 0.], [0., 0., 0.]],
     })
@@ -52,7 +53,7 @@ const ViewerModel = widgets.DOMWidgetModel.extend({
 })
 
 
-const createRenderingPipeline = (domWidgetView, rendered_image) => {
+const populateItkVtkViewer = (domWidgetView, rendered_image) => {
   const containerStyle = {
     position: 'relative',
     width: '100%',
@@ -71,9 +72,6 @@ const createRenderingPipeline = (domWidgetView, rendered_image) => {
     containerStyle: containerStyle,
   };
   const imageData = vtkITKHelper.convertItkToVtkImage(rendered_image)
-  const bounds = imageData.getBounds()
-  domWidgetView.model.set('roi', [[bounds[0], bounds[2], bounds[4]], [bounds[1], bounds[3], bounds[5]]])
-  domWidgetView.model.save_changes()
   const is3D = rendered_image.imageType.dimension === 3
   domWidgetView.model.use2D = !is3D
   if (domWidgetView.model.hasOwnProperty('itkVtkViewer')) {
@@ -112,106 +110,122 @@ const ViewerView = widgets.DOMWidgetView.extend({
     this.model.on('change:cmap', this.cmap_changed, this)
     this.model.on('change:shadow', this.shadow_changed, this)
     this.model.on('change:slicing_planes', this.slicing_planes_changed, this)
+    this.model.on('change:roi_widget', this.roi_widget_changed, this)
     this.model.on('change:gradient_opacity', this.gradient_opacity_changed, this)
-    this.rendered_image_changed().then(() => {
-      this.annotations_changed()
-      this.interpolation_changed()
-      this.cmap_changed()
-      this.mode_changed()
-      this.shadow_changed()
-      this.slicing_planes_changed()
-      this.gradient_opacity_changed()
-      this.ui_collapsed_changed()
+  },
 
-      const onUserInterfaceCollapsedToggle = (collapsed) => {
-        if (collapsed !== this.model.get('ui_collapsed')) {
-          this.model.set('ui_collapsed', collapsed)
-          this.model.save_changes()
-        }
-      }
-      this.model.itkVtkViewer.subscribeToggleUserInterfaceCollapsed(onUserInterfaceCollapsedToggle)
+  initializeViewer: function() {
+    if (this.model.viewerInitialized === true) {
+      return
+    }
 
-      const onAnnotationsToggle = (enabled) => {
-        if (enabled !== this.model.get('annotations')) {
-          this.model.set('annotations', enabled)
-          this.model.save_changes()
-        }
-      }
-      this.model.itkVtkViewer.subscribeToggleAnnotations(onAnnotationsToggle)
+    this.annotations_changed()
+    this.interpolation_changed()
+    this.cmap_changed()
+    this.mode_changed()
+    this.shadow_changed()
+    this.slicing_planes_changed()
+    this.roi_widget_changed()
+    this.gradient_opacity_changed()
+    this.ui_collapsed_changed()
 
-      const onInterpolationToggle = (enabled) => {
-        if (enabled !== this.model.get('interpolation')) {
-          this.model.set('interpolation', enabled)
-          this.model.save_changes()
-        }
-      }
-      this.model.itkVtkViewer.subscribeToggleInterpolation(onInterpolationToggle)
-
-      const onSelectColorMap = (colorMap) => {
-        if (colorMap !== this.model.get('cmap')) {
-          this.model.set('cmap', colorMap)
-          this.model.save_changes()
-        }
-      }
-      this.model.itkVtkViewer.subscribeSelectColorMap(onSelectColorMap)
-
-      const onCroppingPlanesChanged = (planes, bboxCorners) => {
-        this.model.set('roi', [bboxCorners[0], bboxCorners[7]])
+    const onUserInterfaceCollapsedToggle = (collapsed) => {
+      if (collapsed !== this.model.get('ui_collapsed')) {
+        this.model.set('ui_collapsed', collapsed)
         this.model.save_changes()
       }
-      this.model.itkVtkViewer.subscribeCroppingPlanesChanged(onCroppingPlanesChanged)
+    }
+    this.model.itkVtkViewer.subscribeToggleUserInterfaceCollapsed(onUserInterfaceCollapsedToggle)
 
-      if (!this.model.use2D) {
-        const onViewModeChanged = (mode) => {
-          let pythonMode = null;
-          switch (mode) {
-          case 'XPlane':
-            pythonMode = 'x'
-            break
-          case 'YPlane':
-            pythonMode = 'y'
-            break
-          case 'ZPlane':
-            pythonMode = 'z'
-            break
-          case 'VolumeRendering':
-            pythonMode = 'v'
-            break
-          default:
-            throw new Error('Unknown view mode')
-          }
-          if (pythonMode !== this.model.get('mode')) {
-            this.model.set('mode', pythonMode)
-            this.model.save_changes()
-          }
-        }
-        this.model.itkVtkViewer.subscribeViewModeChanged(onViewModeChanged)
-
-        const onShadowToggle = (enabled) => {
-          if (enabled !== this.model.get('shadow')) {
-            this.model.set('shadow', enabled)
-            this.model.save_changes()
-          }
-        }
-        this.model.itkVtkViewer.subscribeToggleShadow(onShadowToggle)
-
-        const onSlicingPlanesToggle = (enabled) => {
-          if (enabled !== this.model.get('slicing_planes')) {
-            this.model.set('slicing_planes', enabled)
-            this.model.save_changes()
-          }
-        }
-        this.model.itkVtkViewer.subscribeToggleSlicingPlanes(onSlicingPlanesToggle)
-
-        const onGradientOpacityChange = (opacity) => {
-          if (opacity !== this.model.get('gradient_opacity')) {
-            this.model.set('gradient_opacity', opacity)
-            this.model.save_changes()
-          }
-        }
-        this.model.itkVtkViewer.subscribeGradientOpacityChanged(onGradientOpacityChange)
+    const onAnnotationsToggle = (enabled) => {
+      if (enabled !== this.model.get('annotations')) {
+        this.model.set('annotations', enabled)
+        this.model.save_changes()
       }
-    })
+    }
+    this.model.itkVtkViewer.subscribeToggleAnnotations(onAnnotationsToggle)
+
+    const onInterpolationToggle = (enabled) => {
+      if (enabled !== this.model.get('interpolation')) {
+        this.model.set('interpolation', enabled)
+        this.model.save_changes()
+      }
+    }
+    this.model.itkVtkViewer.subscribeToggleInterpolation(onInterpolationToggle)
+
+    const onSelectColorMap = (colorMap) => {
+      if (colorMap !== this.model.get('cmap')) {
+        this.model.set('cmap', colorMap)
+        this.model.save_changes()
+      }
+    }
+    this.model.itkVtkViewer.subscribeSelectColorMap(onSelectColorMap)
+
+    const onCroppingPlanesChanged = (planes, bboxCorners) => {
+      this.model.set('roi', [bboxCorners[0], bboxCorners[7]])
+      this.model.save_changes()
+    }
+    this.model.itkVtkViewer.subscribeCroppingPlanesChanged(onCroppingPlanesChanged)
+
+    if (!this.model.use2D) {
+      const onViewModeChanged = (mode) => {
+        let pythonMode = null;
+        switch (mode) {
+        case 'XPlane':
+          pythonMode = 'x'
+          break
+        case 'YPlane':
+          pythonMode = 'y'
+          break
+        case 'ZPlane':
+          pythonMode = 'z'
+          break
+        case 'VolumeRendering':
+          pythonMode = 'v'
+          break
+        default:
+          throw new Error('Unknown view mode')
+        }
+        if (pythonMode !== this.model.get('mode')) {
+          this.model.set('mode', pythonMode)
+          this.model.save_changes()
+        }
+      }
+      this.model.itkVtkViewer.subscribeViewModeChanged(onViewModeChanged)
+
+      const onShadowToggle = (enabled) => {
+        if (enabled !== this.model.get('shadow')) {
+          this.model.set('shadow', enabled)
+          this.model.save_changes()
+        }
+      }
+      this.model.itkVtkViewer.subscribeToggleShadow(onShadowToggle)
+
+      const onSlicingPlanesToggle = (enabled) => {
+        if (enabled !== this.model.get('slicing_planes')) {
+          this.model.set('slicing_planes', enabled)
+          this.model.save_changes()
+        }
+      }
+      this.model.itkVtkViewer.subscribeToggleSlicingPlanes(onSlicingPlanesToggle)
+
+      const onCroppingPlanesToggle = (enabled) => {
+        if (enabled !== this.model.get('roi_widget')) {
+          this.model.set('roi_widget', enabled)
+          this.model.save_changes()
+        }
+      }
+      this.model.itkVtkViewer.subscribeToggleCroppingPlanes(onCroppingPlanesToggle)
+
+      const onGradientOpacityChange = (opacity) => {
+        if (opacity !== this.model.get('gradient_opacity')) {
+          this.model.set('gradient_opacity', opacity)
+          this.model.save_changes()
+        }
+      }
+      this.model.itkVtkViewer.subscribeGradientOpacityChanged(onGradientOpacityChange)
+    }
+    this.model.viewerInitialized = true
   },
 
   rendered_image_changed: function() {
@@ -312,10 +326,12 @@ const ViewerView = widgets.DOMWidgetView.extend({
               default:
                 console.error('Unexpected component type: ' + rendered_image.imageType.componentType)
             }
-            return createRenderingPipeline(domWidgetView, rendered_image)
+            populateItkVtkViewer(domWidgetView, rendered_image)
+            domWidgetView.initializeViewer()
           })
       } else {
-        return Promise.resolve(createRenderingPipeline(this, rendered_image))
+        populateItkVtkViewer(this, rendered_image)
+        this.initializeViewer()
       }
     }
   },
@@ -381,6 +397,13 @@ const ViewerView = widgets.DOMWidgetView.extend({
     const slicing_planes = this.model.get('slicing_planes')
     if (this.model.hasOwnProperty('itkVtkViewer') && !this.model.use2D) {
       this.model.itkVtkViewer.setSlicingPlanesEnabled(slicing_planes)
+    }
+  },
+
+  roi_widget_changed: function() {
+    const roi_widget = this.model.get('roi_widget')
+    if (this.model.hasOwnProperty('itkVtkViewer') && !this.model.use2D) {
+      this.model.itkVtkViewer.setCroppingPlanesEnabled(roi_widget)
     }
   },
 

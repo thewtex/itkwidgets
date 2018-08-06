@@ -8,11 +8,12 @@ In the future, will add optional segmentation mesh overlay.
 import collections
 import functools
 import time
+import warnings
 
 import itk
 import numpy as np
 import ipywidgets as widgets
-from traitlets import CBool, CFloat, CInt, Unicode, CaselessStrEnum, Tuple, List, TraitError, validate
+from traitlets import CBool, CFloat, CInt, Unicode, CaselessStrEnum, List, TraitError, validate
 from .trait_types import ITKImage, itkimage_serialization
 try:
     import ipywebrtc
@@ -156,10 +157,11 @@ class Viewer(ViewerParent):
     cmap = Unicode('Viridis (matplotlib)').tag(sync=True)
     shadow = CBool(default_value=True, help="Use shadowing in the volume rendering.").tag(sync=True)
     slicing_planes = CBool(default_value=False, help="Display the slicing planes in volume rendering view mode.").tag(sync=True)
+    roi_widget = CBool(default_value=False, help="Display the widget to select a ROI.").tag(sync=True)
     gradient_opacity = CFloat(default_value=0.2, help="Volume rendering gradient opacity, from (0.0, 1.0]").tag(sync=True)
     size_limit_2d = List(CInt(), default_value=[2048, 2048], help="Size limit for 2D image visualization.").tag(sync=False)
     size_limit_3d = List(CInt(), default_value=[256, 256, 256], help="Size limit for 3D image visualization.").tag(sync=False)
-    _downsampling = CBool(default_value=False, help="We are downsampling the image to meet the size limits.").tag(sync=True)
+    _downsampling = CBool(default_value=False, help="We are downsampling the image to meet the size limits.").tag(sync=False)
     roi = List(List(CFloat()),
             default_value=[[0., 0., 0.], [0., 0., 0.]],
             help="Region of interest: ((lower_x, lower_y, lower_z), (upper_x, upper_y, upper_z))").tag(sync=True)
@@ -177,15 +179,25 @@ class Viewer(ViewerParent):
                 if size[dim] > self.size_limit_3d[dim]:
                     self._downsampling = True
         if self._downsampling:
+            warnings.warn('Image exceeds size_limit_2d or size_limit_3d; downsampling. To avoid downsampling, increase limits or use itkwidgets.view_large_image.')
             self.shrinker = itk.BinShrinkImageFilter.New(self.image)
-        self.update_rendered_image()
-        self.observe(self.update_rendered_image, ['image'])
+        self.observe(self.update_image, ['image'])
+        self.update_image()
 
     @debounced(delay_seconds=0.4, method=True)
-    def update_rendered_image(self, change=None):
-        self._update_rendered_image()
+    def update_image(self, change=None):
+        dimension = self.image.GetImageDimension()
+        size = itk.Size[dimension]((self.image.GetLargestPossibleRegion().GetSize()))
+        index = itk.Index[dimension](self.image.GetLargestPossibleRegion().GetIndex())
+        roi = []
+        roi.append(list(self.image.TransformIndexToPhysicalPoint(index)))
+        for dim in range(dimension):
+            index[dim] += size[dim]
+        roi.append(list(self.image.TransformIndexToPhysicalPoint(index)))
+        self.roi = roi
+        self.update_rendered_image()
 
-    def _update_rendered_image(self):
+    def update_rendered_image(self):
         if self.image is None:
             return
         if self._downsampling:
@@ -255,7 +267,8 @@ class Viewer(ViewerParent):
 
 
 def view(image, ui_collapsed=False, annotations=True, interpolation=True,
-        cmap=cm.viridis, mode='v', shadow=True, slicing_planes=False, gradient_opacity=0.2):
+        cmap=cm.viridis, mode='v', shadow=True, slicing_planes=False,
+        roi_widget=False, gradient_opacity=0.2, **kwargs):
     """View the image.
 
     Creates and returns an ipywidget to visualize the image.
@@ -298,6 +311,9 @@ def view(image, ui_collapsed=False, annotations=True, interpolation=True,
     slicing_planes: bool, optional, default: False
         Enable slicing planes on the volume rendering.
 
+    roi_widget: bool, optional, default: False
+        Display the native widget to select a region of interest (ROI)
+
     gradient_opacity: float, optional, default: 0.2
         Gradient opacity for the volume rendering, in the range (0.0, 1.0].
 
@@ -308,9 +324,100 @@ def view(image, ui_collapsed=False, annotations=True, interpolation=True,
         IPython.display.display. Query or set properties on the object to change
         the visualization or retrieve values created by interacting with the
         widget.
+
+    Other Parameters
+    ----------------
+    size_limit_2d: list, optional, default: [256, 256]
+        Size for 2D images beyond which the image will be downsampled.
+
+    size_limit_3d: list, optional, default: [2048, 2048, 2048]
+        Size for 3D images beyond which the image will be downsampled.
+
+    Warns
+    -----
+    A warning will be thrown if the image exceeds the size limits and is
+    downsampled.
+
+    See Also
+    --------
+    view_large_image: View large images
     """
     viewer = Viewer(image=image, ui_collapsed=ui_collapsed,
             annotations=annotations, interpolation=interpolation, cmap=cmap,
             mode=mode, shadow=shadow, slicing_planes=slicing_planes,
-            gradient_opacity=gradient_opacity)
+            roi_widget=roi_widget,
+            gradient_opacity=gradient_opacity, **kwargs)
     return viewer
+
+def view_large_image(image, **kwargs):
+    """View a large image.
+
+    The selected region of interest in the visualization on the left is
+    displayed in a viewer on the right.
+
+
+    Parameters
+    ----------
+    image : array_like, itk.Image, or vtk.vtkImageData
+        The 2D or 3D image to visualize.
+
+    **kwargs:
+        itkwidgets.view keyword arguments passed to the viewers.
+    """
+    with warnings.catch_warnings():
+        # Ignore downsampling warnings
+        warnings.simplefilter("ignore")
+
+        viewer = Viewer(image=image, **kwargs)
+        if 'roi_widget' not in kwargs:
+            viewer.roi_widget = True
+
+        shrinker = itk.BinShrinkImageFilter.New(image)
+        def update_shrinker_input(change=None):
+            shinker.SetInput(viewer.image)
+        viewer.observe(update_shrinker_input, ['image'])
+
+        region = image.GetLargestPossibleRegion()
+        size = region.GetSize()
+        dimension = image.GetImageDimension()
+
+        def find_shrink_factors(limit):
+            shrink_factors = shrinker.GetShrinkFactors()
+            for dim in range(dimension):
+                shrink_factors[dim] = 1
+                while(int(np.floor(float(size[dim]) / shrink_factors[dim])) > limit[dim]):
+                    shrink_factors[dim] += 1
+            return shrink_factors
+
+        if dimension == 2:
+            shrink_factors = find_shrink_factors(viewer.size_limit_2d)
+        else:
+            shrink_factors = find_shrink_factors(viewer.size_limit_3d)
+        shrinker.SetShrinkFactors(shrink_factors)
+        shrinker.UpdateLargestPossibleRegion()
+        downsampled = shrinker.GetOutput()
+        index = downsampled.TransformPhysicalPointToIndex(viewer.roi[0][:dimension])
+        upperIndex = downsampled.TransformPhysicalPointToIndex(viewer.roi[1][:dimension])
+        size = upperIndex - index
+        region = itk.ImageRegion[dimension]()
+        region.SetIndex(index)
+        region.SetSize(tuple(size))
+        # Account for rounding truncation issues
+        region.PadByRadius(1)
+        region.Crop(downsampled.GetLargestPossibleRegion())
++       roi_filter = itk.RegionOfInterestImageFilter.New(shrinker)
+        roi_filter.SetRegionOfInterest(region)
+        roi_filter.GetOutput().SetRequestedRegion(region)
+        roi_filter.Update()
+        roi_viewer = Viewer(image=roi_filter.GetOutput(), **kwargs)
+        def update_roi():
+            index = downsampled.TransformPhysicalPointToIndex(viewer.roi[0][:dimension])
+            upperIndex = downsampled.TransformPhysicalPointToIndex(viewer.roi[1][:dimension])
+            size = upperIndex - index
+            region = itk.ImageRegion[dimension]()
+            region.SetIndex(index)
+            region.SetSize(tuple(size))
+
+        viewer.observe(update_roi, ['roi'])
+        widget = widgets.VBox([viewer, roi_viewer])
+    return widget
