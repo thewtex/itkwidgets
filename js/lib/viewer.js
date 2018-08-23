@@ -53,6 +53,23 @@ const ViewerModel = widgets.DOMWidgetModel.extend({
 })
 
 
+const resetRenderingStatus = (domWidgetView) => {
+  const viewProxy = domWidgetView.model.itkVtkViewer.getViewProxy()
+  const representation = viewProxy.getRepresentations()[0];
+  let unsubscriber = null
+  const onLightingActivated = () => {
+    console.log('the liiiights are on* twinkle, twinkle*')
+    domWidgetView.model.set('_rendering', false)
+    domWidgetView.model.save_changes()
+    if (unsubscriber) {
+      unsubscriber.unsubscribe()
+    }
+  }
+  const volumeMapper = representation.getMapper()
+  unsubscriber = volumeMapper.onLightingActivated(onLightingActivated)
+}
+
+
 const populateItkVtkViewer = (domWidgetView, rendered_image) => {
   const containerStyle = {
     position: 'relative',
@@ -75,6 +92,7 @@ const populateItkVtkViewer = (domWidgetView, rendered_image) => {
   const is3D = rendered_image.imageType.dimension === 3
   domWidgetView.model.use2D = !is3D
   if (domWidgetView.model.hasOwnProperty('itkVtkViewer')) {
+    resetRenderingStatus(domWidgetView)
     domWidgetView.model.itkVtkViewer.setImage(imageData)
     domWidgetView.model.itkVtkViewer.renderLater()
   } else {
@@ -83,6 +101,7 @@ const populateItkVtkViewer = (domWidgetView, rendered_image) => {
       image: imageData,
       use2D: !is3D,
     })
+    resetRenderingStatus(domWidgetView)
     const viewProxy = domWidgetView.model.itkVtkViewer.getViewProxy()
     const renderWindow = viewProxy.getRenderWindow()
     const viewCanvas = renderWindow.getViews()[0].getCanvas()
@@ -112,6 +131,7 @@ const ViewerView = widgets.DOMWidgetView.extend({
     this.model.on('change:slicing_planes', this.slicing_planes_changed, this)
     this.model.on('change:roi_widget', this.roi_widget_changed, this)
     this.model.on('change:gradient_opacity', this.gradient_opacity_changed, this)
+    this.rendered_image_changed()
   },
 
   initializeViewer: function() {
@@ -162,6 +182,7 @@ const ViewerView = widgets.DOMWidgetView.extend({
     this.model.itkVtkViewer.subscribeSelectColorMap(onSelectColorMap)
 
     const onCroppingPlanesChanged = (planes, bboxCorners) => {
+      console.log('roi changed!')
       this.model.set('roi', [bboxCorners[0], bboxCorners[7]])
       this.model.save_changes()
     }

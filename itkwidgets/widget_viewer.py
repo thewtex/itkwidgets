@@ -162,6 +162,7 @@ class Viewer(ViewerParent):
     size_limit_2d = List(CInt(), default_value=[2048, 2048], help="Size limit for 2D image visualization.").tag(sync=False)
     size_limit_3d = List(CInt(), default_value=[256, 256, 256], help="Size limit for 3D image visualization.").tag(sync=False)
     _downsampling = CBool(default_value=False, help="We are downsampling the image to meet the size limits.").tag(sync=False)
+    _rendering = CBool(default_value=False, help="We are currently rendering.").tag(sync=True)
     roi = List(List(CFloat()),
             default_value=[[0., 0., 0.], [0., 0., 0.]],
             help="Region of interest: ((lower_x, lower_y, lower_z), (upper_x, upper_y, upper_z))").tag(sync=True)
@@ -179,12 +180,14 @@ class Viewer(ViewerParent):
                 if size[dim] > self.size_limit_3d[dim]:
                     self._downsampling = True
         if self._downsampling:
-            warnings.warn('Image exceeds size_limit_2d or size_limit_3d; downsampling. To avoid downsampling, increase limits or use itkwidgets.view_large_image.')
-            self.shrinker = itk.BinShrinkImageFilter.New(self.image)
+            self.extractor = itk.ExtractImageFilter.New(self.image)
+            self.extractor.InPlaceOn()
+            self.shrinker = itk.BinShrinkImageFilter.New(self.extractor)
         self.observe(self.update_image, ['image'])
         self.update_image()
+        if self._downsampling:
+            self.observe(self._on_roi_changed, ['roi'])
 
-    @debounced(delay_seconds=0.4, method=True)
     def update_image(self, change=None):
         dimension = self.image.GetImageDimension()
         size = itk.Size[dimension]((self.image.GetLargestPossibleRegion().GetSize()))
@@ -197,13 +200,23 @@ class Viewer(ViewerParent):
         self.roi = roi
         self.update_rendered_image()
 
-    def update_rendered_image(self):
-        if self.image is None:
+    def _on_roi_changed(self, change=None):
+        print(change)
+        self.update_rendered_image()
+
+    # @debounced(delay_seconds=0.3, method=True)
+    def update_rendered_image(self, change=None):
+        print('updating rendered image!')
+        print(self._rendering)
+        if self.image is None or self._rendering:
+            print('skipping')
             return
+        self._rendering = True
         if self._downsampling:
-            region = self.image.GetLargestPossibleRegion()
-            size = region.GetSize()
             dimension = self.image.GetImageDimension()
+            index = self.image.TransformPhysicalPointToIndex(self.roi[0][:dimension])
+            upperIndex = self.image.TransformPhysicalPointToIndex(self.roi[1][:dimension])
+            size = upperIndex - index
 
             def find_shrink_factors(limit):
                 shrink_factors = self.shrinker.GetShrinkFactors()
@@ -218,7 +231,19 @@ class Viewer(ViewerParent):
             else:
                 shrink_factors = find_shrink_factors(self.size_limit_3d)
             self.shrinker.SetShrinkFactors(shrink_factors)
+            print('strinkers: ', shrink_factors)
+
+            region = itk.ImageRegion[dimension]()
+            region.SetIndex(index)
+            region.SetSize(tuple(size))
+            # Account for rounding truncation issues
+            region.PadByRadius(1)
+            region.Crop(self.image.GetLargestPossibleRegion())
+            self.extractor.SetExtractionRegion(region)
+
+            print('updating')
             self.shrinker.UpdateLargestPossibleRegion()
+            print('updated')
             self.rendered_image = self.shrinker.GetOutput()
         else:
             self.rendered_image = self.image
@@ -404,20 +429,22 @@ def view_large_image(image, **kwargs):
         region.SetSize(tuple(size))
         # Account for rounding truncation issues
         region.PadByRadius(1)
+        # print('view large', region)
         region.Crop(downsampled.GetLargestPossibleRegion())
-+       roi_filter = itk.RegionOfInterestImageFilter.New(shrinker)
+        roi_filter = itk.RegionOfInterestImageFilter.New(shrinker)
         roi_filter.SetRegionOfInterest(region)
         roi_filter.GetOutput().SetRequestedRegion(region)
         roi_filter.Update()
-        roi_viewer = Viewer(image=roi_filter.GetOutput(), **kwargs)
-        def update_roi():
-            index = downsampled.TransformPhysicalPointToIndex(viewer.roi[0][:dimension])
-            upperIndex = downsampled.TransformPhysicalPointToIndex(viewer.roi[1][:dimension])
-            size = upperIndex - index
-            region = itk.ImageRegion[dimension]()
-            region.SetIndex(index)
-            region.SetSize(tuple(size))
+        # roi_viewer = Viewer(image=roi_filter.GetOutput(), **kwargs)
+        # def update_roi():
+            # index = downsampled.TransformPhysicalPointToIndex(viewer.roi[0][:dimension])
+            # upperIndex = downsampled.TransformPhysicalPointToIndex(viewer.roi[1][:dimension])
+            # size = upperIndex - index
+            # region = itk.ImageRegion[dimension]()
+            # region.SetIndex(index)
+            # region.SetSize(tuple(size))
 
-        viewer.observe(update_roi, ['roi'])
-        widget = widgets.VBox([viewer, roi_viewer])
-    return widget
+        # viewer.observe(update_roi, ['roi'])
+        # widget = widgets.VBox([viewer, roi_viewer])
+    # return widget
+    return viewer
