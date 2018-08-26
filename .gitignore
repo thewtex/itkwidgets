@@ -19,6 +19,7 @@ examples/*.nrrd
 examples/*.png
 examples/*.mha
 examples/*.tif
+examples/*.jpg
 examples/vase.vti
 examples/widget_video.webm
 
