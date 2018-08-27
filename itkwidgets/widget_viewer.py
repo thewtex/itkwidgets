@@ -204,8 +204,7 @@ class Viewer(ViewerParent):
         print(change)
         self.update_rendered_image()
 
-    # @debounced(delay_seconds=0.3, method=True)
-    def update_rendered_image(self, change=None):
+    def update_rendered_image_testing(self, change=None):
         print('updating rendered image!')
         print(self._rendering)
         if self.image is None or self._rendering:
@@ -242,8 +241,65 @@ class Viewer(ViewerParent):
             self.extractor.SetExtractionRegion(region)
 
             print('updating')
+            print(shinker.GetOutput().GetRegions())
+            self.shrinker.UpdateOutputInformation()
+            # self.shrinker.UpdateOutputInformation()
+            # self.shrinker.SetRequestedRegion(
+            # print(shinker.GetOutput().GetRegions())
+            # self.shrinker.Update()
+            # print(shinker.GetOutput().GetRegions())
+            shrinker.GetOutput().UpdateLargestPossibleRegion()
+            # print('updated')
+            self.rendered_image = self.shrinker.GetOutput()
+        # else:
+            # self.rendered_image = self.image
+
+    # @debounced(delay_seconds=0.3, method=True)
+    def update_rendered_image(self, change=None):
+        print('updating rendered image!')
+        print(self._rendering)
+        if self.image is None or self._rendering:
+            print('skipping')
+            return
+        self._rendering = True
+        if self._downsampling:
+            dimension = self.image.GetImageDimension()
+            index = self.image.TransformPhysicalPointToIndex(self.roi[0][:dimension])
+            upperIndex = self.image.TransformPhysicalPointToIndex(self.roi[1][:dimension])
+            size = upperIndex - index
+
+            def find_shrink_factors(limit):
+                shrink_factors = self.shrinker.GetShrinkFactors()
+                for dim in range(dimension):
+                    shrink_factors[dim] = 1
+                    while(int(np.floor(float(size[dim]) / shrink_factors[dim])) > limit[dim]):
+                        shrink_factors[dim] += 1
+                return shrink_factors
+
+            if dimension == 2:
+                shrink_factors = find_shrink_factors(self.size_limit_2d)
+            else:
+                shrink_factors = find_shrink_factors(self.size_limit_3d)
+            self.shrinker.SetShrinkFactors(shrink_factors)
+            print('strinkers: ', shrink_factors)
+
+            region = itk.ImageRegion[dimension]()
+            region.SetIndex(index)
+            region.SetSize(tuple(size))
+            # Account for rounding truncation issues
+            region.PadByRadius(1)
+            region.Crop(self.image.GetLargestPossibleRegion())
+            self.extractor.SetExtractionRegion(region)
+            # self.extractor.UpdateOutputInformation()
+
+            # print('updating')
+            # self.shrinker.UpdateOutputInformation()
+            # shrunken = self.shrinker.GetOutput()
+            # shrunken.Update()
+            # shrunken.SetRequestedRegion(shrunken.GetLargestPossibleRegion())
+            # shrunken.Update()
             self.shrinker.UpdateLargestPossibleRegion()
-            print('updated')
+            # print('updated')
             self.rendered_image = self.shrinker.GetOutput()
         else:
             self.rendered_image = self.image

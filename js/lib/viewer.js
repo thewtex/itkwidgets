@@ -91,10 +91,14 @@ const populateItkVtkViewer = (domWidgetView, rendered_image) => {
   const imageData = vtkITKHelper.convertItkToVtkImage(rendered_image)
   const is3D = rendered_image.imageType.dimension === 3
   domWidgetView.model.use2D = !is3D
+  console.log('populate viewer')
   if (domWidgetView.model.hasOwnProperty('itkVtkViewer')) {
     resetRenderingStatus(domWidgetView)
+    console.log('has viewer resetRenderingstatus')
     domWidgetView.model.itkVtkViewer.setImage(imageData)
+    console.log('has viewer setImage')
     domWidgetView.model.itkVtkViewer.renderLater()
+    console.log('has viewer renderlater')
   } else {
     domWidgetView.model.itkVtkViewer = createViewer(domWidgetView.el, {
       viewerStyle: viewerStyle,
@@ -102,6 +106,7 @@ const populateItkVtkViewer = (domWidgetView, rendered_image) => {
       use2D: !is3D,
     })
     resetRenderingStatus(domWidgetView)
+    console.log('new viewer reset renderingstatus')
     const viewProxy = domWidgetView.model.itkVtkViewer.getViewProxy()
     const renderWindow = viewProxy.getRenderWindow()
     const viewCanvas = renderWindow.getViews()[0].getCanvas()
@@ -131,13 +136,16 @@ const ViewerView = widgets.DOMWidgetView.extend({
     this.model.on('change:slicing_planes', this.slicing_planes_changed, this)
     this.model.on('change:roi_widget', this.roi_widget_changed, this)
     this.model.on('change:gradient_opacity', this.gradient_opacity_changed, this)
+    console.log('render')
     this.rendered_image_changed()
+    console.log('render render_image_changed')
   },
 
   initializeViewer: function() {
     if (this.model.viewerInitialized === true) {
       return
     }
+    console.log('initializing viewer')
 
     this.annotations_changed()
     this.interpolation_changed()
@@ -250,9 +258,12 @@ const ViewerView = widgets.DOMWidgetView.extend({
   },
 
   rendered_image_changed: function() {
+    console.log('rendered_image_changed')
     const rendered_image = this.model.get('rendered_image')
+    console.log('rendered_image_changed get')
     if(rendered_image) {
       if (!rendered_image.data) {
+        console.log('rendered_image_changed !render_image.data')
         const byteArray = new Uint8Array(rendered_image.compressedData.buffer)
         const reducer = (accumulator, currentValue) => accumulator * currentValue
         const pixelCount = rendered_image.size.reduce(reducer, 1)
@@ -348,10 +359,13 @@ const ViewerView = widgets.DOMWidgetView.extend({
                 console.error('Unexpected component type: ' + rendered_image.imageType.componentType)
             }
             populateItkVtkViewer(domWidgetView, rendered_image)
+            console.log('rendered_image_changed populateItkVtkViewer')
             domWidgetView.initializeViewer()
           })
       } else {
+        console.log('rendered_image_changed data exists')
         populateItkVtkViewer(this, rendered_image)
+        console.log('rendered_image_changed data exists populateItkVtkViewer')
         this.initializeViewer()
       }
     }
@@ -402,6 +416,7 @@ const ViewerView = widgets.DOMWidgetView.extend({
 
   cmap_changed: function() {
     const cmap = this.model.get('cmap')
+    console.log('cmap_changed')
     if (this.model.hasOwnProperty('itkVtkViewer')) {
       this.model.itkVtkViewer.setColorMap(cmap)
     }
