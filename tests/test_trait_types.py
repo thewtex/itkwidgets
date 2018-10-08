@@ -25,6 +25,31 @@ test_image.SetPixel(index, 87)
 index[0] = 3
 test_image.SetPixel(index, 22)
 
+TestVectorImageType = itk.VectorImage[TestPixelType, TestDimension]
+test_vector_image  = TestVectorImageType.New()
+test_size = (6, 6)
+region = itk.ImageRegion[TestDimension](test_size)
+test_vector_image.SetRegions(region)
+components_per_pixel = 2
+test_vector_image.SetNumberOfComponentsPerPixel(components_per_pixel)
+test_vector_image.Allocate()
+vlv = itk.VariableLengthVector[TestPixelType](components_per_pixel)
+vlv.Fill(0)
+test_vector_image.FillBuffer(vlv)
+index = itk.Index[TestDimension]()
+index.Fill(0)
+vlv.Fill(4)
+test_vector_image.SetPixel(index, vlv)
+index[0] = 5
+vlv.Fill(66)
+test_vector_image.SetPixel(index, vlv)
+index[1] = 3
+vlv.Fill(87)
+test_vector_image.SetPixel(index, vlv)
+index[0] = 3
+vlv.Fill(22)
+test_vector_image.SetPixel(index, vlv)
+
 def test_itkimage_to_json():
     itkimage_to_json = trait_types.itkimage_to_json
     asjson = itkimage_to_json(test_image)
@@ -51,6 +76,42 @@ def test_itkimage_from_json():
     asimage = itkimage_from_json(asjson)
     assert(asimage.GetImageDimension() == TestDimension)
     assert(asimage.GetNumberOfComponentsPerPixel()== 1)
+    assert(tuple(asimage.GetOrigin()) == (0.0, 0.0))
+    assert(tuple(asimage.GetSpacing()) == (1.0, 1.0))
+    assert(tuple(asimage.GetBufferedRegion().GetSize()) == test_size)
+    assert(asimage.GetPixel((0,0)) == 4)
+    assert(asimage.GetPixel((5,0)) == 66)
+    assert(asimage.GetPixel((5,3)) == 87)
+    assert(asimage.GetPixel((3,3)) == 22)
+
+def test_itkimage_to_json_vectorimage():
+    itkimage_to_json = trait_types.itkimage_to_json
+    asjson = itkimage_to_json(test_vector_image)
+    imageType = asjson['imageType']
+    assert(imageType['dimension'] == TestDimension)
+    assert(imageType['componentType'] == 'uint8_t')
+    assert(imageType['pixelType'] == 14)
+    assert(imageType['components'] == components_per_pixel)
+    assert(asjson['origin'] == (0.0, 0.0))
+    assert(asjson['spacing'] == (1.0, 1.0))
+    assert(asjson['size'] == test_size)
+    assert(asjson['direction']['data'] == [1.0, 0.0, 0.0, 1.0])
+    assert(asjson['direction']['rows'] == 2)
+    assert(asjson['direction']['columns'] == 2)
+    baseline = np.array([40,181,47,253,32,72,181,0,0,104,4,4,0,66,
+        66,0,22,22,0,0,87,87,0,3,16,0,181,185,195,29,2], dtype=np.uint8)
+    print(np.array(asjson['compressedData'], dtype=np.uint8))
+    assert((np.array(asjson['compressedData'], dtype=np.uint8) == baseline).all())
+
+def test_itkimage_from_json_vectorimage():
+    itkimage_to_json = trait_types.itkimage_to_json
+    asjson = itkimage_to_json(test_vector_image)
+    itkimage_from_json = trait_types.itkimage_from_json
+    print(asjson)
+    asimage = itkimage_from_json(asjson)
+    print(asimage)
+    assert(asimage.GetImageDimension() == TestDimension)
+    assert(asimage.GetNumberOfComponentsPerPixel()== components_per_pixel)
     assert(tuple(asimage.GetOrigin()) == (0.0, 0.0))
     assert(tuple(asimage.GetSpacing()) == (1.0, 1.0))
     assert(tuple(asimage.GetBufferedRegion().GetSize()) == test_size)

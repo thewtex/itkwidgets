@@ -82,54 +82,6 @@ class ITKImage(traitlets.TraitType):
             self.error(obj, value)
 
 def _image_to_type(itkimage):
-    component_str = repr(itkimage).split('itkImagePython.')[1].split(';')[0][8:]
-    if component_str[:2] == 'UL':
-        if os.name == 'nt':
-            return 'uint32_t',
-        else:
-            return 'uint64_t',
-    mangle = None
-    pixelType = 1
-    if component_str[:2] == 'SL':
-        if os.name == 'nt':
-            return 'int32_t', 1,
-        else:
-            return 'int64_t', 1,
-    if component_str[0] == 'V':
-        # Vector
-        mangle = component_str[1]
-        pixelType = 5
-    elif component_str[:2] == 'CF':
-        # complex flot
-        return 'float', 10
-    elif component_str[:2] == 'CD':
-        # complex flot
-        return 'double', 10
-    elif component_str[0] == 'C':
-        # CovariantVector
-        mangle = component_str[1]
-        pixelType = 7
-    elif component_str[0] == 'O':
-        # Offset
-        return 'int64_t', 4
-    elif component_str[:2] == 'FA':
-        # FixedArray
-        mangle = component_str[2]
-        pixelType = 11
-    elif component_str[:4] == 'RGBA':
-        # RGBA
-        mangle = component_str[4:-1]
-        pixelType = 3
-    elif component_str[:3] == 'RGB':
-        # RGB
-        mangle = component_str[3:-1]
-        pixelType = 2
-    elif component_str[:4] == 'SSRT':
-        # SymmetricSecondRankTensor
-        mangle = component_str[4:-1]
-        pixelType = 8
-    else:
-        mangle = component_str[:-1]
     _python_to_js = {
         'SC':'int8_t',
         'UC':'uint8_t',
@@ -141,7 +93,60 @@ def _image_to_type(itkimage):
         'D':'double',
         'B':'uint8_t'
         }
-    return _python_to_js[mangle], pixelType
+    image_repr = repr(itkimage)
+    if 'itkImagePython' in image_repr:
+        component_str = repr(itkimage).split('itkImagePython.')[1].split(';')[0][8:]
+    else:
+        component_str = repr(itkimage).split('itkVectorImagePython.')[1].split(';')[0][14:]
+        return _python_to_js[component_str[:-1]], 14
+    if component_str[:2] == 'UL':
+        if os.name == 'nt':
+            return 'uint32_t',
+        else:
+            return 'uint64_t',
+    mangle = None
+    pixel_type = 1
+    if component_str[:2] == 'SL':
+        if os.name == 'nt':
+            return 'int32_t', 1,
+        else:
+            return 'int64_t', 1,
+    if component_str[0] == 'V':
+        # Vector
+        mangle = component_str[1]
+        pixel_type = 5
+    elif component_str[:2] == 'CF':
+        # complex flot
+        return 'float', 10
+    elif component_str[:2] == 'CD':
+        # complex flot
+        return 'double', 10
+    elif component_str[0] == 'C':
+        # CovariantVector
+        mangle = component_str[1]
+        pixel_type = 7
+    elif component_str[0] == 'O':
+        # Offset
+        return 'int64_t', 4
+    elif component_str[:2] == 'FA':
+        # FixedArray
+        mangle = component_str[2]
+        pixel_type = 11
+    elif component_str[:4] == 'RGBA':
+        # RGBA
+        mangle = component_str[4:-1]
+        pixel_type = 3
+    elif component_str[:3] == 'RGB':
+        # RGB
+        mangle = component_str[3:-1]
+        pixel_type = 2
+    elif component_str[:4] == 'SSRT':
+        # SymmetricSecondRankTensor
+        mangle = component_str[4:-1]
+        pixel_type = 8
+    else:
+        mangle = component_str[:-1]
+    return _python_to_js[mangle], pixel_type
 
 def itkimage_to_json(itkimage, manager=None):
     """Serialize a Python itk.Image object.
@@ -191,7 +196,8 @@ def _type_to_image(jstype):
         5:'V',
         7:'CV',
         8:'SSRT',
-        11:'FA'
+        11:'FA',
+        14:''
         }
     pixelType = jstype['pixelType']
     dimension = jstype['dimension']
@@ -234,9 +240,13 @@ def _type_to_image(jstype):
     dtype = _js_to_numpy_dtype[jstype['componentType']]
     if pixelType != 4:
         prefix += _js_to_python[jstype['componentType']]
-    if pixelType not in (1, 2, 3, 10):
+    if pixelType not in (1, 2, 3, 10, 14):
         prefix += str(dimension)
     prefix += str(dimension)
+    print(prefix)
+    if pixelType == 14:
+        print('returning VectorImage')
+        return getattr(itk.VectorImage, prefix), dtype
     return getattr(itk.Image, prefix), dtype
 
 def itkimage_from_json(js, manager=None):
@@ -245,29 +255,38 @@ def itkimage_from_json(js, manager=None):
         return None
     else:
         ImageType, dtype = _type_to_image(js['imageType'])
+        print(ImageType, dtype)
         decompressor = zstd.ZstdDecompressor()
         if six.PY2:
             asBytes = js['compressedData'].tobytes()
-            pixelBufferArrayCompressed = np.frombuffer(asBytes, dtype=dtype)
+            pixel_buffer_array_compressed = np.frombuffer(asBytes, dtype=dtype)
         else:
-            pixelBufferArrayCompressed = np.frombuffer(js['compressedData'], dtype=dtype)
-        pixelCount = reduce(lambda x, y: x*y, js['size'], 1)
-        numberOfBytes = pixelCount * js['imageType']['components'] * np.dtype(dtype).itemsize
-        pixelBufferArray = \
-            np.frombuffer(decompressor.decompress(pixelBufferArrayCompressed,
-                numberOfBytes),
+            pixel_buffer_array_compressed = np.frombuffer(js['compressedData'], dtype=dtype)
+        pixel_count = reduce(lambda x, y: x*y, js['size'], 1)
+        number_of_bytes = pixel_count * js['imageType']['components'] * np.dtype(dtype).itemsize
+        pixel_buffer_array = \
+            np.frombuffer(decompressor.decompress(pixel_buffer_array_compressed,
+                number_of_bytes),
                     dtype=dtype)
-        pixelBufferArray.shape = js['size'][::-1]
-        image = itk.PyBuffer[ImageType].GetImageFromArray(pixelBufferArray)
+        if js['imageType']['components'] == 1:
+            pixel_buffer_array.shape = js['size'][::-1]
+            image = itk.PyBuffer[ImageType].GetImageFromArray(pixel_buffer_array)
+        else:
+            pixel_buffer_array.shape = js['size'][::-1] + (js['imageType']['components'],)
+            is_vector = True
+            image = itk.PyBuffer[ImageType].GetImageFromArray(pixel_buffer_array, is_vector)
+            print(image)
+            if js['imageType'] == 14:
+                image.SetNumberOfComponentsPerPixel(js['imageType']['components'])
         Dimension = image.GetImageDimension()
         image.SetOrigin(js['origin'])
         image.SetSpacing(js['spacing'])
         direction = image.GetDirection()
-        directionMatrix = direction.GetVnlMatrix()
-        directionJs = js['direction']['data']
+        direction_matrix = direction.GetVnlMatrix()
+        direction_js = js['direction']['data']
         for col in range(Dimension):
             for row in range(Dimension):
-                directionMatrix.put(row, col, directionJs[col + row * Dimension])
+                direction_matrix.put(row, col, direction_js[col + row * Dimension])
         return image
 
 itkimage_serialization = {
