@@ -36,11 +36,13 @@ Interactive `Jupyter <https://jupyter.org/>`_ widgets to visualize images in 2D 
   - ImageJ / Fiji / ImageJ2 images
   - Additional NumPy Array-like objects
 
-- Anisotropic voxel spacing supported
 - 3D and 2D image support
-- Line profiles
+- Anisotropic voxel spacing supported
 - Combine with other *ipywidgets* to quickly create graphical interfaces to
   algorithms
+- Line profiles
+- Region of interest selection
+- Video recording
 
 .. image:: https://thumbs.gfycat.com/ShyFelineBeetle-size_restricted.gif
     :width: 640px
