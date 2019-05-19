@@ -45,6 +45,36 @@ class ITKImage(traitlets.TraitType):
         except:
             self.error(obj, value)
 
+class ITKPolyData(traitlets.TraitType):
+    """A trait type holding a object compatible with vtk.js PolyData"""
+
+    info_text = 'A PolyData is a surface mesh structure that can hold data ' + \
+            'arrays in points, cells or in the dataset itself.'
+
+    # Hold a reference to the source object to use with shallow views
+    _source_object = None
+
+    def validate(self, obj, value):
+        self._source_object = value
+
+        polydata_from_array = to_itk_polydata(value)
+        if polydata_from_array:
+            return polydata_from_array
+
+        try:
+            # an itk.Mesh or a filter that produces an mesh
+            # return itk.output(value)
+            # Working around traitlets / ipywidgets update mechanism to
+            # force an update. While the result of __eq__ can indicate it is
+            # the same object, the actual contents may have changed, as
+            # indicated by polydata.GetMTime()
+            value = itk.output(value)
+            grafted = value.__New_orig__()
+            grafted.Graft(value)
+            return grafted
+        except:
+            self.error(obj, value)
+
 def _image_to_type(itkimage):
     component_str = repr(itkimage).split('itkImagePython.')[1].split(';')[0][8:]
     if component_str[:2] == 'UL':

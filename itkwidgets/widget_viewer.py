@@ -14,7 +14,7 @@ import numpy as np
 import ipywidgets as widgets
 from traitlets import CBool, CFloat, Unicode, CaselessStrEnum, Tuple, List, TraitError, validate
 from ipydatawidgets import NDArray, array_serialization, shape_constraints
-from .trait_types import ITKImage, itkimage_serialization
+from .trait_types import ITKImage, ITKPolyData, itkimage_serialization, itkpolydata_serialization
 try:
     import ipywebrtc
     ViewerParent = ipywebrtc.MediaStream
@@ -173,6 +173,7 @@ class Viewer(ViewerParent):
     _view_module_version = Unicode('^0.16.1').tag(sync=True)
     _model_module_version = Unicode('^0.16.1').tag(sync=True)
     image = ITKImage(default_value=None, allow_none=True, help="Image to visualize.").tag(sync=False, **itkimage_serialization)
+    geometries = ITKPolyData(default_value=None, allow_none=True, help="Geometries to visualize.").tag(sync=False, **itkpolyadat_serialization)
     rendered_image = ITKImage(default_value=None, allow_none=True).tag(sync=True, **itkimage_serialization)
     _rendering_image = CBool(default_value=False, help="We are currently volume rendering the image.").tag(sync=True)
     ui_collapsed = CBool(default_value=False, help="Collapse the built in user interface.").tag(sync=True)
@@ -206,14 +207,18 @@ class Viewer(ViewerParent):
 
     def __init__(self, **kwargs):
         super(Viewer, self).__init__(**kwargs)
-        dimension = self.image.GetImageDimension()
-        largest_region = self.image.GetLargestPossibleRegion()
-        size = largest_region.GetSize()
+        if self.image:
+            dimension = self.image.GetImageDimension()
+            largest_region = self.image.GetLargestPossibleRegion()
+            size = largest_region.GetSize()
+        else:
+            dimension = 3
+            size = [0, 0, 0]
 
         # Cache this so we do not need to recompute on it when resetting the roi
         self._largest_roi_rendered_image = None
         self._largest_roi = np.zeros((2, 3), dtype=np.float64)
-        if not np.any(self.roi):
+        if not np.any(self.roi) and self.image:
             largest_index = largest_region.GetIndex()
             self.roi[0][:dimension] = np.array(self.image.TransformIndexToPhysicalPoint(largest_index))
             largest_index_upper = largest_index + size
@@ -375,12 +380,12 @@ class Viewer(ViewerParent):
         return tuple(slices)
 
 
-def view(image, ui_collapsed=False, annotations=True, interpolation=True,
+def view(image=None, geometries=None, ui_collapsed=False, annotations=True, interpolation=True,
         cmap=cm.viridis, mode='v', shadow=True, slicing_planes=False,
         gradient_opacity=0.22, **kwargs):
-    """View the image.
+    """View an image or geometries.
 
-    Creates and returns an ipywidget to visualize the image.
+    Creates and returns an ipywidget to visualize the image and / or geometries.
 
     The image can be 2D or 3D.
 
@@ -388,10 +393,16 @@ def view(image, ui_collapsed=False, annotations=True, interpolation=True,
     vtk.vtkImageData, imglyb.ReferenceGuardingRandomAccessibleInterval, or
     something that is NumPy array-like, e.g. a Dask array.
 
+    The type of the geometries can be a vtk.vtkPolyData or pyvista.PolyData.
+
     Parameters
     ----------
-    image : array_like, itk.Image, or vtk.vtkImageData
+    image : array_like, itk.Image, or vtk.vtkImageData, default: None
         The 2D or 3D image to visualize.
+
+    geometries : Single vtk.vtkPolyData, pyvista.PolyData or a list or array of
+                 the same, default: None
+        The geometries to visualize.
 
     ui_collapsed : bool, optional, default: False
         Collapse the native widget user interface.
@@ -445,7 +456,7 @@ def view(image, ui_collapsed=False, annotations=True, interpolation=True,
         the visualization or retrieve values created by interacting with the
         widget.
     """
-    viewer = Viewer(image=image, ui_collapsed=ui_collapsed,
+    viewer = Viewer(image=image, geometries=geometries, ui_collapsed=ui_collapsed,
             annotations=annotations, interpolation=interpolation, cmap=cmap,
             mode=mode, shadow=shadow, slicing_planes=slicing_planes,
             gradient_opacity=gradient_opacity, **kwargs)
