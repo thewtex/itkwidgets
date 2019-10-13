@@ -3,14 +3,12 @@
 Image visualization with a line profile.
 """
 
-from traitlets import Unicode
-
 import numpy as np
 import scipy.ndimage
 import ipywidgets as widgets
 from .widget_viewer import Viewer
 from ipydatawidgets import NDArray, array_serialization, shape_constraints
-from traitlets import CBool
+from traitlets import CBool, Unicode
 import matplotlib.pyplot as plt
 import matplotlib
 import IPython

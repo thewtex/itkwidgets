@@ -618,8 +618,12 @@ const ViewerView = widgets.DOMWidgetView.extend({
           this.model.save_changes()
         }
         // If view-up has not been set, set initial value to itk-vtk-viewer default
-        const viewUp = this.model.get('camera').slice(6, 9)
-        if (!!!viewUp[0] && !!!viewUp[1] && !!!viewUp[2]) {
+        const camera = this.model.get('camera')
+        let viewUp = null
+        if (!!camera.slice) {
+          viewUp = camera.slice(6, 9)
+        }
+        if (!!!viewUp || !!!viewUp[0] && !!!viewUp[1] && !!!viewUp[2]) {
           onCameraChanged()
         } else {
           this.camera_changed()
