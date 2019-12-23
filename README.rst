@@ -91,6 +91,11 @@ Examples on Binder
 
 Data types:
 
+.. |binder_2d_itk_images| raw:: html
+
+  <a href="https://mybinder.org/v2/gh/InsightSoftwareConsortium/itkwidgets/master?filepath=examples%2F2DImage.ipynb" target="_blank">Binder: 2D ITK Images</a>
+
+- |binder_2d_itk_images|
 - `Binder: 2D ITK Images <https://mybinder.org/v2/gh/InsightSoftwareConsortium/itkwidgets/master?filepath=examples%2F2DImage.ipynb>`_
 - `Binder: 3D ITK Images <https://mybinder.org/v2/gh/InsightSoftwareConsortium/itkwidgets/master?filepath=examples%2F3DImage.ipynb>`_
 - `Binder: Dask Array images <https://mybinder.org/v2/gh/InsightSoftwareConsortium/itkwidgets/master?filepath=examples/DaskArray.ipynb>`_
