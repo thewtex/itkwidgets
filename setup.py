@@ -170,6 +170,7 @@ setup_args = {
         'numpy',
         'scipy',
         'six',
+        'xarray',
         'zstandard',
     ],
     'packages': find_packages(),

@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 import IPython
 import itk
-from ._transform_types import to_itk_image
+from ._transform_types import to_spatial_image, image_from_xarray
 
 
 @widgets.register
@@ -51,7 +51,7 @@ class LineProfiler(Viewer):
             kwargs['ui_collapsed'] = True
         super(LineProfiler, self).__init__(**kwargs)
 
-    def get_profile(self, image_or_array=None,
+    def get_profile(self, spatial_image_like=None,
                     point1=None, point2=None, order=None):
         """Calculate the line profile.
 
@@ -63,7 +63,7 @@ class LineProfiler(Viewer):
 
         Parameters
         ----------
-        image_or_array : array_like, itk.Image, or vtk.vtkImageData
+        spatial_image_like : can be converted to a spatial image
             The 2D or 3D image to visualize.
 
         point1 : list of float
@@ -78,26 +78,23 @@ class LineProfiler(Viewer):
 
         """
 
-        if image_or_array is None:
-            image_or_array = self.image
+        if spatial_image_like is None:
+            spatial_image_like = self.image
         if point1 is None:
             point1 = self.point1
         if point2 is None:
             point2 = self.point2
         if order is None:
             order = self.order
-        image_from_array = to_itk_image(image_or_array)
-        if image_from_array:
-            image_ = image_from_array
-        else:
-            image_ = image_or_array
-        image_array = itk.array_view_from_image(image_)
-        dimension = image_.GetImageDimension()
+        spatial_image = to_spatial_image(spatial_image_like)
+        itk_image = image_from_xarray(spatial_image)
+        image_array = itk.array_view_from_image(itk_image)
+        dimension = itk_image.GetImageDimension()
         distance = np.sqrt(
             sum([(point1[ii] - point2[ii])**2 for ii in range(dimension)]))
-        index1 = tuple(image_.TransformPhysicalPointToIndex(
+        index1 = tuple(itk_image.TransformPhysicalPointToIndex(
             tuple(point1[:dimension])))
-        index2 = tuple(image_.TransformPhysicalPointToIndex(
+        index2 = tuple(itk_image.TransformPhysicalPointToIndex(
             tuple(point2[:dimension])))
         num_points = int(np.round(
             np.sqrt(sum([(index1[ii] - index2[ii])**2 for ii in range(dimension)])) * 2.1))

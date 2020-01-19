@@ -17,7 +17,8 @@ import numpy as np
 import ipywidgets as widgets
 from traitlets import CBool, CFloat, Unicode, CaselessStrEnum, List, validate
 from ipydatawidgets import NDArray, array_serialization, shape_constraints
-from .trait_types import ITKImage, PointSetList, PolyDataList, itkimage_serialization, polydata_list_serialization, Colormap
+from .trait_types import SpatialImage, PointSetList, PolyDataList, itkimage_serialization, polydata_list_serialization, Colormap
+from ._transform_types import image_from_xarray, si_index_to_position, si_position_to_index
 
 try:
     import ipywebrtc
@@ -118,13 +119,13 @@ class Viewer(ViewerParent):
     _model_module = Unicode('itkwidgets').tag(sync=True)
     _view_module_version = Unicode('^0.25.0').tag(sync=True)
     _model_module_version = Unicode('^0.25.0').tag(sync=True)
-    image = ITKImage(
+    image = SpatialImage(
         default_value=None,
         allow_none=True,
         help="Image to visualize.").tag(
         sync=False,
         **itkimage_serialization)
-    rendered_image = ITKImage(
+    rendered_image = SpatialImage(
         default_value=None,
         allow_none=True).tag(
         sync=True,
@@ -298,36 +299,38 @@ class Viewer(ViewerParent):
 
         super(Viewer, self).__init__(**kwargs)
 
-        if not self.image:
-            return
-        dimension = self.image.GetImageDimension()
-        largest_region = self.image.GetLargestPossibleRegion()
-        size = largest_region.GetSize()
-
+        self.extractor = None
+        self.shrinker = None
         # Cache this so we do not need to recompute on it when resetting the
         # roi
         self._largest_roi_rendered_image = None
         self._largest_roi = np.zeros((2, 3), dtype=np.float64)
+
+        if not self.image:
+            return
+        spatial_dims = list(set(('z', 'y', 'x')).intersection(set(self.image.dims)))
+        spatial_dims.sort(reverse=True)
+        self.spatial_dims = spatial_dims
+        dimension = len(spatial_dims)
+        self.dimension = dimension
+        # i,j,k order
+        largest_size = list(reversed([len(self.image.coords[dim]) - 1 for dim in spatial_dims)))
+        self.largest_size = largest_size
+
         if not np.any(self.roi):
-            largest_index = largest_region.GetIndex()
-            self.roi[0][:dimension] = np.array(
-                self.image.TransformIndexToPhysicalPoint(largest_index))
-            largest_index_upper = largest_index + size
-            self.roi[1][:dimension] = np.array(
-                self.image.TransformIndexToPhysicalPoint(largest_index_upper))
+            self.roi[0][:dimension] = si_index_to_position(self.image, spatial_dims, [0]*dimension)[::-1]
+            last_indices = [len(self.image.coords[dim]) - 1 for dim in spatial_dims]
+            self.roi[1][:dimension] = si_index_to_position(self.image, spatial_dims, last_indices)[::-1]
             self._largest_roi = self.roi.copy()
 
         if dimension == 2:
             for dim in range(dimension):
-                if size[dim] > self.size_limit_2d[dim]:
+                if largest_size[dim] > self.size_limit_2d[dim]:
                     self._downsampling = True
         else:
             for dim in range(dimension):
-                if size[dim] > self.size_limit_3d[dim]:
+                if largest_size[dim] > self.size_limit_3d[dim]:
                     self._downsampling = True
-        if self._downsampling:
-            self.extractor = itk.ExtractImageFilter.New(self.image)
-            self.shrinker = itk.BinShrinkImageFilter.New(self.extractor)
         self._update_rendered_image()
         if self._downsampling:
             self.observe(self._on_roi_changed, ['roi'])
@@ -341,16 +344,13 @@ class Viewer(ViewerParent):
 
     def _on_reset_crop_requested(self, change=None):
         if change.new is True and self._downsampling:
-            dimension = self.image.GetImageDimension()
-            largest_region = self.image.GetLargestPossibleRegion()
-            size = largest_region.GetSize()
-            largest_index = largest_region.GetIndex()
+            dimension = self.dimension
+            spatial_dims = self.spatial_dims
             new_roi = self.roi.copy()
-            new_roi[0][:dimension] = np.array(
-                self.image.TransformIndexToPhysicalPoint(largest_index))
-            largest_index_upper = largest_index + size
-            new_roi[1][:dimension] = np.array(
-                self.image.TransformIndexToPhysicalPoint(largest_index_upper))
+            new_roi[0][:dimension] = si_index_to_position(self.image, spatial_dims, [0]*dimension)[::-1]
+            last_indices = [len(self.image.coords[dim]) - 1 for dim in spatial_dims]
+            new_roi[1][:dimension] = si_index_to_position(self.image, spatial_dims, last_indices)[::-1]
+
             self._largest_roi = new_roi.copy()
             self.roi = new_roi
         if change.new is True:
@@ -360,6 +360,14 @@ class Viewer(ViewerParent):
     def update_rendered_image(self, change=None):
         self._largest_roi_rendered_image = None
         self._largest_roi = np.zeros((2, 3), dtype=np.float64)
+        spatial_dims = list(set(('z', 'y', 'x')).intersection(set(self.image.dims)))
+        spatial_dims.sort(reverse=True)
+        self.spatial_dims = spatial_dims
+        dimension = len(spatial_dims)
+        self.dimension = dimension
+        # i,j,k order
+        largest_size = list(reversed([len(self.image.coords[dim]) - 1 for dim in spatial_dims)))
+        self.largest_size = largest_size
         self._update_rendered_image()
 
     @staticmethod
@@ -382,7 +390,8 @@ class Viewer(ViewerParent):
         self._rendering_image = True
 
         if self._downsampling:
-            dimension = self.image.GetImageDimension()
+            dimension = self.dimension
+            # TODO: xarray updates from here...
             index = self.image.TransformPhysicalPointToIndex(
                 self.roi[0][:dimension])
             upper_index = self.image.TransformPhysicalPointToIndex(
@@ -406,6 +415,9 @@ class Viewer(ViewerParent):
             region.PadByRadius(1)
             region.Crop(self.image.GetLargestPossibleRegion())
 
+            if self.extractor is None:
+                self.extractor = itk.ExtractImageFilter.New(itk_image)
+                self.shrinker = itk.BinShrinkImageFilter.New(self.extractor)
             self.extractor.SetInput(self.image)
             self.extractor.SetExtractionRegion(region)
 

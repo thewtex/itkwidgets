@@ -8,7 +8,7 @@ import numpy as np
 import ipywidgets as widgets
 from .widget_viewer import Viewer
 import itk
-from ._transform_types import to_itk_image
+from ._transform_types import to_spatial_image, image_from_xarray
 
 
 def checkerboard(image1, image2, pattern=3, invert=False, **viewer_kwargs):  # noqa: C901
@@ -35,12 +35,10 @@ def checkerboard(image1, image2, pattern=3, invert=False, **viewer_kwargs):  # n
 
     """
 
-    itk_image1 = to_itk_image(image1)
-    if not itk_image1:
-        itk_image1 = itk.output(image1)
-    itk_image2 = to_itk_image(image2)
-    if not itk_image2:
-        itk_image2 = itk.output(image2)
+    spatial_image1 = to_spatial_image(image1)
+    itk_image1 = image_from_xarray(spatial_image1)
+    spatial_image2 = to_spatial_image(image2)
+    itk_image2 = image_from_xarray(spatial_image2)
     input1 = itk_image1
     input2 = itk_image2
 

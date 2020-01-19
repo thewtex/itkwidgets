@@ -9,4 +9,5 @@ matplotlib
 numpy
 scipy
 six
+xarray
 zstandard

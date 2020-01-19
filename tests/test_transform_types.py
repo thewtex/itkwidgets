@@ -1,8 +1,9 @@
 import itk
 import numpy as np
+import xarray as xr
 import pytest
 
-from itkwidgets._transform_types import to_point_set, to_geometry, to_itk_image
+from itkwidgets._transform_types import to_point_set, to_geometry, to_spatial_image
 
 
 def test_mesh_to_geometry():
@@ -208,9 +209,9 @@ def test_numpy_array_to_point_set():
 
 
 def test_non_contiguous_array():
-    "Check that a non-contiguous array raises the appropriate error"
+    "Check that we handle a non-contiguous array"
 
     data = np.random.random((10, 10, 10))
     data = data[..., 0]   # slicing the array makes it non-contiguous
-    output = to_itk_image(data)
-    assert isinstance(output, itk.Image)
+    output = to_spatial_image(data)
+    assert isinstance(output, xr.DataArray)

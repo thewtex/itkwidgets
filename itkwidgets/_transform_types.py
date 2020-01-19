@@ -1,7 +1,9 @@
-__all__ = ['to_itk_image', 'to_point_set', 'to_geometry']
+__all__ = ['to_spatial_image', 'to_point_set', 'to_geometry',
+           'spatial_image_from_array', 'image_from_xarray', 'xarray_from_image']
 
 import itk
 import numpy as np
+import xarray as xr
 
 
 def is_arraylike(arr):
@@ -132,18 +134,137 @@ def _vtk_data_attributes_to_vtkjs(attributes):
     return vtkjs_attributes
 
 
-def to_itk_image(image_like):
-    if is_arraylike(image_like):
-        array = np.asarray(image_like)
-        case_use_view = array.flags['OWNDATA']
-        if have_dask and isinstance(image_like, dask.array.core.Array):
-            case_use_view = False
-        array = np.ascontiguousarray(array)
-        if case_use_view:
-            image_from_array = itk.image_view_from_array(array)
-        else:
-            image_from_array = itk.image_from_array(array)
-        return image_from_array
+def xarray_from_image(image):
+    array_view = itk.array_view_from_image(image)
+    spacing = itk.spacing(image)
+    origin = itk.origin(image)
+    size = itk.size(image)
+    direction = np.transpose(itk.array_from_matrix(image.GetDirection()))
+    spatial_dimension = image.GetImageDimension()
+
+    spatial_dims = ('x', 'y', 'z')
+    coords = {}
+    for index, dim in enumerate(spatial_dims[:spatial_dimension]):
+        coords[dim] = np.arange(origin[index],
+                                origin[index] + size[index]*spacing[index],
+                                spacing[index],
+                                dtype=np.float64)
+
+    dims = list(reversed(spatial_dims[:spatial_dimension]))
+    components = image.GetNumberOfComponentsPerPixel()
+    if components > 1:
+        dims.append('c')
+        coords['c'] = np.arange(components, dtype=np.uint64)
+
+    data_array = xr.DataArray(array_view,
+                              dims=dims,
+                              coords=coords,
+                              attrs={'direction': direction})
+    return data_array
+
+def image_from_xarray(xarray):
+    spatial_dims = list(set(('z', 'y', 'x')).intersection(set(xarray.dims)))
+    spatial_dims.sort(reverse=True)
+    spatial_dimension = len(spatial_dims)
+    # Todo: check dims order, flip as needed
+
+    is_vector = False
+    if spatial_dimension < len(xarray.dims):
+        is_vector = True
+    # Dask array -> NumPy ndarray as needed
+    ndarray = np.asarray(xarray.values)
+    itk_image = itk.image_view_from_array(ndarray, is_vector=is_vector)
+
+    origin = [0.0]*spatial_dimension
+    spacing = [1.0]*spatial_dimension
+    for index in range(spatial_dimension):
+        dim = spatial_dims[index]
+        origin[index]
+        spacing[index] = xarray.coords[dim][1] - xarray.coords[dim][0]
+    itk_image.SetSpacing(spacing)
+    itk_image.SetOrigin(origin)
+    if 'direction' in xarray.attrs:
+        direction = xarray.attrs['direction']
+        itk_image.SetDirection(np.transpose(direction))
+
+    return itk_image
+
+
+def si_index_to_position(image, spatial_dims, indices):
+    """
+    image: xarray spatial image
+    spatial_dims: sequence of spatial dims in zyx order
+    indices: integer data array indices corresponding to the spatial dims
+
+    returns: position in world space
+    """
+    # coords = origin + spacing * index
+    # position = direction * (coords - origin) + origin
+    origin = [image.coords[dim][0] for dim in spatial_dims]
+    origin = np.asarray(origin)
+    coords = [image.coords[dim][index] for dim, index in zip(spatial_dims, indices)]
+    coords = np.asarray(coords)
+    direction = image.attrs['direction']
+    position = np.matmul(direction, coords - origin) + origin
+    return position
+
+def si_position_to_index(image, spatial_dims, position):
+    """
+    image: xarray spatial image
+    spatial_dims: sequence of spatial dims in zyx order
+    positions: position in world space corresponding to the spatial dims
+
+    returns: index into data array
+    """
+    # coords = origin + spacing * index
+    # position = direction * (coords - origin) + origin
+    origin = [image.coords[dim][0] for dim in spatial_dims]
+    origin = np.asarray(origin)
+    direction_inv = np.linalg.inv(image.attrs['direction'])
+    offset = np.matmul(direction_inv, position - origin)
+    coords = offset + origin
+    indices = [image.indexes[dim].get_loc(c, method='nearest')
+               for dim, c in zip(spatial_dims, coords)]
+    return indices
+
+
+
+def spatial_image_from_array(array):
+    """Generate an xarray spatial image from a NumPy array-like.
+
+    Todo: kwargs to specify dims, coords, direction"""
+    shape = array.shape
+    # Start by assuming all spatial dimensions
+    spatial_dimension = len(shape)
+    direction = np.eye(spatial_dimension)
+    spatial_dims = ('z', 'y', 'x')
+    coords = {}
+    for index, dim in enumerate(spatial_dims[-spatial_dimension:]):
+        coords[dim] = np.arange(0.0,
+                                shape[index],
+                                1.0,
+                                dtype=np.float64)
+
+    dims = list(spatial_dims[-spatial_dimension:])
+
+    data_array = xr.DataArray(array,
+                              dims=dims,
+                              coords=coords,
+                              attrs={'direction': direction,})
+    return data_array
+
+
+def to_spatial_image(image_like):
+    if isinstance(image_like, xr.DataArray):
+        # Check si.is_spatial_image(image_like)
+        return image_like
+    elif isinstance(image_like, itk.Object):
+        # an itk.Image or a filter that produces an Image
+        itk_image = itk.output(image_like)
+        spatial_image = xarray_from_image(itk_image)
+        return spatial_image
+    elif is_arraylike(image_like):
+        return spatial_image_from_array(image_like)
     elif have_vtk and isinstance(image_like, vtk.vtkImageData):
         from vtk.util import numpy_support as vtk_numpy_support
         array = vtk_numpy_support.vtk_to_numpy(
@@ -152,7 +273,7 @@ def to_itk_image(image_like):
         image_from_array = itk.image_view_from_array(array)
         image_from_array.SetSpacing(image_like.GetSpacing())
         image_from_array.SetOrigin(image_like.GetOrigin())
-        return image_from_array
+        return xarray_from_image(image_from_array)
     elif have_simpleitk and isinstance(image_like, sitk.Image):
         array = sitk.GetArrayViewFromImage(image_like)
         image_from_array = itk.image_view_from_array(array)
@@ -163,14 +284,14 @@ def to_itk_image(image_like):
         npdirection = np.reshape(npdirection, (-1, 3))
         itkdirection = itk.matrix_from_array(npdirection)
         image_from_array.SetDirection(itkdirection)
-        return image_from_array
+        return xarray_from_image(image_from_array)
     elif have_imagej:
         import imglyb
         if isinstance(image_like,
                       imglyb.util.ReferenceGuardingRandomAccessibleInterval):
             array = imglyb.to_numpy(image_like)
             image_from_array = itk.image_view_from_array(array)
-            return image_from_array
+            return xarray_from_image(image_from_array)
 
     return None
 

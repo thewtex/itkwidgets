@@ -16,13 +16,13 @@ try:
 except ImportError:
     pass
 
-from ._transform_types import to_itk_image, to_point_set, to_geometry
+from ._transform_types import to_spatial_image, to_point_set, to_geometry
 
 # from IPython.core.debugger import set_trace
 
 
-class ITKImage(traitlets.TraitType):
-    """A trait type holding an itk.Image object"""
+class SpatialImage(traitlets.TraitType):
+    """A trait type holding a spatial image"""
 
     info_text = 'An N-dimensional, potentially multi-component, scientific ' + \
         'image with origin, spacing, and direction metadata'
@@ -33,23 +33,9 @@ class ITKImage(traitlets.TraitType):
     def validate(self, obj, value):
         self._source_object = value
 
-        image_from_array = to_itk_image(value)
-        if image_from_array:
-            return image_from_array
-
-        try:
-            # an itk.Image or a filter that produces an Image
-            # return itk.output(value)
-            # Working around traitlets / ipywidgets update mechanism to
-            # force an update. While the result of __eq__ can indicate it is
-            # the same object, the actual contents may have changed, as
-            # indicated by image.GetMTime()
-            value = itk.output(value)
-            grafted = value.__New_orig__()
-            grafted.Graft(value)
-            return grafted
-        except BaseException:
-            self.error(obj, value)
+        spatial_image = to_spatial_image(value)
+        # todo: re-order as needed into t, z, y, x, c
+        return spatial_image
 
 
 def _image_to_type(itkimage):  # noqa: C901

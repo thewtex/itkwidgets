@@ -1,9 +1,5 @@
-import numpy as np
 import ipywidgets as widgets
 from itkwidgets.widget_viewer import Viewer
-from traitlets import CBool
-import IPython
-from itkwidgets._transform_types import to_itk_image
 
 
 def compare(image1, image2,

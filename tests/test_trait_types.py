@@ -5,8 +5,8 @@ import numpy as np
 from itkwidgets._transform_types import to_point_set
 
 
-def test_ITKImage():
-    info_text = trait_types.ITKImage.info_text
+def test_SpatialImage():
+    info_text = trait_types.SpatialImage.info_text
     assert(info_text.find('image') != -1)
 
 
