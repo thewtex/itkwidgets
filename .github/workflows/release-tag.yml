@@ -13,8 +13,6 @@ jobs:
         uses: actions/checkout@v2
       - name: Set up Python
         uses: actions/setup-python@v1
-      - name: Setup tmate session
-        uses: mxschmitt/action-tmate@v2
       - name: Download package
         id: download_package
         run: |
@@ -26,12 +24,5 @@ jobs:
       - name: Generate release notes
         run: |
           python ./utilities/release-notes.py ./ReleaseNotes.txt
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            itkwidgets*.whl
-          body_path: ./ReleaseNotes.txt
-          name: ${{ steps.download_package.outputs.release_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v2
