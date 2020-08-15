@@ -2,6 +2,7 @@ __all__ = ['to_itk_image', 'to_point_set', 'to_geometry', 'vtkjs_to_zarr', 'zarr
 
 import itk
 import numpy as np
+import xarray as xr
 
 def is_arraylike(arr):
     return hasattr(arr, 'shape') and \
@@ -229,6 +230,43 @@ def _numpy_array_to_point_set(point_set_like):
         return point_set
     else:
         return None
+
+def si_index_to_position(image, spatial_dims, indices):
+    """
+    image: xarray spatial image
+    spatial_dims: sequence of spatial dims in zyx order
+    indices: integer data array indices corresponding to the spatial dims
+
+    returns: position in world space
+    """
+    # coords = origin + spacing * index
+    # position = direction * (coords - origin) + origin
+    origin = [image.coords[dim][0] for dim in spatial_dims]
+    origin = np.asarray(origin)
+    coords = [image.coords[dim][index] for dim, index in zip(spatial_dims, indices)]
+    coords = np.asarray(coords)
+    direction = image.attrs['direction']
+    position = np.matmul(direction, coords - origin) + origin
+    return position
+
+def si_position_to_index(image, spatial_dims, position):
+    """
+    image: xarray spatial image
+    spatial_dims: sequence of spatial dims in zyx order
+    positions: position in world space corresponding to the spatial dims
+
+    returns: index into data array
+    """
+    # coords = origin + spacing * index
+    # position = direction * (coords - origin) + origin
+    origin = [image.coords[dim][0] for dim in spatial_dims]
+    origin = np.asarray(origin)
+    direction_inv = np.linalg.inv(image.attrs['direction'])
+    offset = np.matmul(direction_inv, position - origin)
+    coords = offset + origin
+    indices = [image.indexes[dim].get_loc(c, method='nearest')
+               for dim, c in zip(spatial_dims, coords)]
+    return indices
 
 def to_itk_image(image_like):
 

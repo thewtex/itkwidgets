@@ -12,11 +12,22 @@ import functools
 import time
 
 import itk
+import xarray as xr
 import numpy as np
 import ipywidgets as widgets
-from traitlets import CBool, CFloat, CInt, Unicode, CaselessStrEnum, List, validate, TraitError, Tuple
+from traitlets import CBool, CFloat, Unicode, CaselessStrEnum, List, validate, TraitError, Tuple
 from ipydatawidgets import NDArray, array_serialization, shape_constraints
-from .trait_types import ITKImage, ImagePointTrait, ImagePoint, PointSetList, PolyDataList, itkimage_serialization, image_point_serialization, polydata_list_serialization, Colormap, LookupTable, Camera
+from .trait_types import SpatialImage, \
+                         ImagePointTrait, \
+                         PointSetList, \
+                         PolyDataList, \
+                         spatial_image_serialization, \
+                         image_point_serialization, \
+                         polydata_list_serialization, \
+                         Colormap, \
+                         LookupTable, \
+                         Camera
+from ._transform_types import si_index_to_position, si_position_to_index
 
 try:
     import ipywebrtc
@@ -39,7 +50,7 @@ except ImportError:
     pass
 
 
-# from IPython.core.debugger import set_trace
+from IPython.core.debugger import set_trace
 
 
 def get_ioloop():
@@ -107,7 +118,6 @@ def yield_for_change(widget, attribute):
         return inner
     return f
 
-
 @widgets.register
 class Viewer(ViewerParent):
     """Viewer widget class."""
@@ -117,31 +127,31 @@ class Viewer(ViewerParent):
     _model_module = Unicode('itkwidgets').tag(sync=True)
     _view_module_version = Unicode('^0.32.0').tag(sync=True)
     _model_module_version = Unicode('^0.32.0').tag(sync=True)
-    image = ITKImage(
+    image = SpatialImage(
         default_value=None,
         allow_none=True,
         help="Image to visualize.").tag(
         sync=False,
-        **itkimage_serialization)
-    rendered_image = ITKImage(
+        **spatial_image_serialization)
+    rendered_image = SpatialImage(
         default_value=None,
         allow_none=True).tag(
         sync=True,
-        **itkimage_serialization)
+        **spatial_image_serialization)
     _rendering_image = CBool(
         default_value=False,
         help="We are currently volume rendering the image.").tag(sync=True)
-    label_image = ITKImage(
+    label_image = SpatialImage(
         default_value=None,
         allow_none=True,
         help="Label map for the image.").tag(
         sync=False,
-        **itkimage_serialization)
-    rendered_label_image = ITKImage(
+        **spatial_image_serialization)
+    rendered_label_image = SpatialImage(
         default_value=None,
         allow_none=True).tag(
         sync=True,
-        **itkimage_serialization)
+        **spatial_image_serialization)
     label_image_names = List(
         allow_none=True,
         default_value=None,
@@ -375,37 +385,44 @@ class Viewer(ViewerParent):
 
         super(Viewer, self).__init__(**kwargs)
 
-        if not self.image and not self.label_image:
+        self._image_chunked = None
+        self._label_image_chunked = None
+
+        if self.image is None and self.label_image is None:
             return
-        if self.image:
+        if not self.image is None:
             image = self.image
         else:
             image = self.label_image
-        dimension = image.GetImageDimension()
-        largest_region = image.GetLargestPossibleRegion()
-        size = largest_region.GetSize()
 
         # Cache this so we do not need to recompute on it when resetting the
         # roi
         self._largest_roi_rendered_image = None
         self._largest_roi_rendered_label_image = None
         self._largest_roi = np.zeros((2, 3), dtype=np.float64)
+
+        spatial_dims = list(set(('z', 'y', 'x')).intersection(set(image.dims)))
+        spatial_dims.sort(reverse=True)
+        self.spatial_dims = spatial_dims
+        dimension = len(spatial_dims)
+        self.dimension = dimension
+        # i,j,k order
+        largest_size = list(reversed([len(image.coords[dim]) - 1 for dim in spatial_dims]))
+        self.largest_size = largest_size
+
         if not np.any(self.roi):
-            largest_index = largest_region.GetIndex()
-            self.roi[0][:dimension] = np.array(
-                image.TransformIndexToPhysicalPoint(largest_index))
-            largest_index_upper = largest_index + size
-            self.roi[1][:dimension] = np.array(
-                image.TransformIndexToPhysicalPoint(largest_index_upper))
+            self.roi[0][:dimension] = si_index_to_position(image, spatial_dims, [0]*dimension)[::-1]
+            last_indices = [len(image.coords[dim]) - 1 for dim in spatial_dims]
+            self.roi[1][:dimension] = si_index_to_position(image, spatial_dims, last_indices)[::-1]
             self._largest_roi = self.roi.copy()
 
         if dimension == 2:
             for dim in range(dimension):
-                if size[dim] > self.size_limit_2d[dim]:
+                if largest_size[dim] > self.size_limit_2d[dim]:
                     self._downsampling = True
         else:
             for dim in range(dimension):
-                if size[dim] > self.size_limit_3d[dim]:
+                if largest_size[dim] > self.size_limit_3d[dim]:
                     self._downsampling = True
         self._update_rendered_image()
         if self._downsampling:
@@ -421,20 +438,16 @@ class Viewer(ViewerParent):
 
     def _on_reset_crop_requested(self, change=None):
         if change.new is True and self._downsampling:
-            if self.image:
+            if not self.image is None:
                 image = self.image
             else:
                 image = self.label_image
-            dimension = image.GetImageDimension()
-            largest_region = image.GetLargestPossibleRegion()
-            size = largest_region.GetSize()
-            largest_index = largest_region.GetIndex()
+            dimension = self.dimension
+            spatial_dims = self.spatial_dims
             new_roi = self.roi.copy()
-            new_roi[0][:dimension] = np.array(
-                image.TransformIndexToPhysicalPoint(largest_index))
-            largest_index_upper = largest_index + size
-            new_roi[1][:dimension] = np.array(
-                image.TransformIndexToPhysicalPoint(largest_index_upper))
+            new_roi[0][:dimension] = si_index_to_position(image, spatial_dims, [0]*dimension)[::-1]
+            last_indices = [len(image.coords[dim]) - 1 for dim in spatial_dims]
+            new_roi[1][:dimension] = si_index_to_position(image, spatial_dims, last_indices)[::-1]
             self._largest_roi = new_roi.copy()
             self.roi = new_roi
         if change.new is True:
@@ -444,7 +457,17 @@ class Viewer(ViewerParent):
     def update_rendered_image(self, change=None):
         self._largest_roi_rendered_image = None
         self._largest_roi_rendered_label_image = None
+        self._image_chunked = None
+        self._label_image_chunked = None
         self._largest_roi = np.zeros((2, 3), dtype=np.float64)
+        spatial_dims = list(set(('z', 'y', 'x')).intersection(set(self.image.dims)))
+        spatial_dims.sort(reverse=True)
+        self.spatial_dims = spatial_dims
+        dimension = len(spatial_dims)
+        self.dimension = dimension
+        # i,j,k order
+        largest_size = list(reversed([len(self.image.coords[dim]) - 1 for dim in spatial_dims]))
+        self.largest_size = largest_size
         self._update_rendered_image()
 
     @staticmethod
@@ -467,15 +490,34 @@ class Viewer(ViewerParent):
         self._rendering_image = True
 
         if self._downsampling:
-            if self.image:
-                image = self.image
+            is_largest = False
+            if np.any(self._largest_roi) and np.all(self._largest_roi == self.roi):
+                is_largest = True
+                if self._largest_roi_rendered_image is not None or self._largest_roi_rendered_label_image is not None:
+                    if self.image:
+                        self.rendered_image = self._largest_roi_rendered_image
+                    if self.label_image:
+                        self.rendered_label_image = self._largest_roi_rendered_label_image
+                    return
+
+            if not self.image is None and self._image_chunked is None:
+                if self.image.chunks:
+                    self._image_chunked = self.image
+                else:
+                    self._image_chunked = self.image.chunk(64)
+            if not self.label_image is None and self._label_image_chunked is None:
+                if self.label_image.chunks:
+                    self._label_image_chunked = self.label_image
+                else:
+                    self._label_image_chunked = self.label_image.chunk(64)
+
+            if not self.image is None:
+                image = self._image_chunked
             else:
-                image = self.label_image
-            dimension = image.GetImageDimension()
-            index = image.TransformPhysicalPointToIndex(
-                self.roi[0][:dimension])
-            upper_index = image.TransformPhysicalPointToIndex(
-                self.roi[1][:dimension])
+                image = self._label_image_chunked
+            dimension = self.dimension
+            index = np.array(si_position_to_index(image, self.spatial_dims, self.roi[0][:dimension]))
+            upper_index = np.array(si_position_to_index(image, self.spatial_dims, self.roi[1][:dimension]))
             size = upper_index - index
 
             if dimension == 2:
@@ -485,75 +527,60 @@ class Viewer(ViewerParent):
                 scale_factors = self._find_scale_factors(
                     self.size_limit_3d, dimension, size)
             self._scale_factors = np.array(scale_factors, dtype=np.uint8)
-            if self.image:
-                self.extractor = itk.ExtractImageFilter.New(self.image)
-                self.shrinker = itk.ShrinkImageFilter.New(self.extractor)
-                self.shrinker.SetShrinkFactors(scale_factors[:dimension])
-            if self.label_image:
-                self.label_image_extractor = itk.ExtractImageFilter.New(self.label_image)
-                self.label_image_shrinker = itk.ShrinkImageFilter.New(self.label_image_extractor)
-                self.label_image_shrinker.SetShrinkFactors(scale_factors[:dimension])
 
-            region = itk.ImageRegion[dimension]()
-            region.SetIndex(index)
-            region.SetSize(tuple(size))
-            # Account for rounding
-            # truncation issues
-            region.PadByRadius(1)
-            region.Crop(image.GetLargestPossibleRegion())
+            index_chunk = [0,] * dimension
+            upper_index_chunk = [0,] * dimension
+            for idx, dim in enumerate(self.spatial_dims):
+                image_idx = image.dims.index(dim)
+                cumsum = np.cumsum(image.chunks[image_idx])
+                argidx = np.argmax(cumsum > index[idx]-1)-1
+                if argidx == -1:
+                    index_chunk[idx] = 0
+                else:
+                    index_chunk[idx] = cumsum[argidx]
+                argidx = np.argmax(cumsum > upper_index[idx]+1)
+                if argidx == 0:
+                    upper_index_chunk[idx] = cumsum[-1]
+                else:
+                    upper_index_chunk[idx] = cumsum[argidx]
+            extract = { dim: slice(index_chunk[idx], upper_index_chunk[idx]) for idx,
+                        dim in enumerate(self.spatial_dims) }
 
-            if self.image:
-                self.extractor.SetInput(self.image)
-                self.extractor.SetExtractionRegion(region)
-            if self.label_image:
-                self.label_image_extractor.SetInput(self.label_image)
-                self.label_image_extractor.SetExtractionRegion(region)
 
-            size = region.GetSize()
-
-            is_largest = False
-            if np.any(self._largest_roi) and np.all(
-                    self._largest_roi == self.roi):
-                is_largest = True
-                if self._largest_roi_rendered_image is not None or self._largest_roi_rendered_label_image is not None:
-                    if self.image:
-                        self.rendered_image = self._largest_roi_rendered_image
-                    if self.label_image:
-                        self.rendered_label_image = self._largest_roi_rendered_label_image
-                    return
-
-            if self.image:
-                self.shrinker.UpdateLargestPossibleRegion()
-            if self.label_image:
+            if not self.image is None:
+                extracted = self._image_chunked.isel(extract)
+                # if extracted.data.size < 
+                computed = extracted.compute()
+                shrunk = itk.bin_shrink_image_filter(computed,
+                         shrink_factors=list(reversed(scale_factors)))
+                # coarsen_dim = { dim: scale_factors[idx] for idx, dim in enumerate(self.spatial_dims) }
+                # shrunk = extracted.coarsen(dim=coarsen_dim, boundary='trim', keep_attrs=True).mean()
+                # TODO: coarsen
+            if not self.label_image is None:
                 self.label_image_shrinker.UpdateLargestPossibleRegion()
+                # TODO: coarsen
             if is_largest:
-                if self.image:
-                    self._largest_roi_rendered_image = self.shrinker.GetOutput()
-                    self._largest_roi_rendered_image.DisconnectPipeline()
-                    self._largest_roi_rendered_image.SetOrigin(
-                        self.roi[0][:dimension])
+                if not self.image is None:
+                    self._largest_roi_rendered_image = shrunk
                     self.rendered_image = self._largest_roi_rendered_image
-                if self.label_image:
+                if not self.label_image is None:
                     self._largest_roi_rendered_label_image = self.label_image_shrinker.GetOutput()
                     self._largest_roi_rendered_label_image.DisconnectPipeline()
                     self._largest_roi_rendered_label_image.SetOrigin(
                         self.roi[0][:dimension])
                     self.rendered_label_image = self._largest_roi_rendered_label_image
                 return
-            if self.image:
-                shrunk = self.shrinker.GetOutput()
-                shrunk.DisconnectPipeline()
-                shrunk.SetOrigin(self.roi[0][:dimension])
+            if not self.image is None:
                 self.rendered_image = shrunk
-            if self.label_image:
+            if not self.label_image is None:
                 shrunk = self.label_image_shrinker.GetOutput()
                 shrunk.DisconnectPipeline()
                 shrunk.SetOrigin(self.roi[0][:dimension])
                 self.rendered_label_image = shrunk
         else:
-            if self.image:
+            if not self.image is None:
                 self.rendered_image = self.image
-            if self.label_image:
+            if not self.label_image is None:
                 self.rendered_label_image = self.label_image
 
     @validate('label_image_weights')
@@ -774,6 +801,11 @@ class Viewer(ViewerParent):
         for dim in range(dimension):
             slices.insert(0, slice(index[dim], upper_index[dim] + 1))
         return tuple(slices)
+
+    def _compare(self, a, b):
+        if isinstance(a, xr.DataArray):
+            return a.equals(b)
+        return super(Viewer, self)._compare(a, b)
 
 
 def view(image=None,  # noqa: C901

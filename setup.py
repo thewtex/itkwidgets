@@ -164,6 +164,7 @@ setup_args = {
         'numpy',
         'six',
         'zstandard',
+        'xarray',
     ],
     'packages': find_packages(),
     'zip_safe': False,

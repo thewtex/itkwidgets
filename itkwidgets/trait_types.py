@@ -4,9 +4,9 @@ import collections
 from datetime import datetime
 
 import traitlets
-import itk
 import numpy as np
 import matplotlib.colors
+import xarray as xr
 try:
     import zstandard as zstd
 except ImportError:
@@ -21,11 +21,18 @@ try:
     have_vtk = True
 except ImportError:
     pass
+have_itk = False
+try:
+    import itk
+    have_itk = True
+except ImportError:
+    pass
 
 from ._transform_types import to_itk_image, to_point_set, to_geometry
+from ._to_spatial_image import to_spatial_image
 from ipydatawidgets import array_serialization, NDArray
 
-# from IPython.core.debugger import set_trace
+from IPython.core.debugger import set_trace
 
 
 class ITKImage(traitlets.TraitType):
@@ -40,6 +47,7 @@ class ITKImage(traitlets.TraitType):
     def validate(self, obj, value):
         self._source_object = value
 
+        import itk
         if not isinstance(value, itk.Image) and not isinstance(value,
                 itk.ProcessObject):
             image_from_array = to_itk_image(value)
@@ -59,6 +67,31 @@ class ITKImage(traitlets.TraitType):
         except BaseException:
             self.error(obj, value)
 
+class SpatialImage(traitlets.TraitType):
+    """A trait type holding a spatial object"""
+
+    info_text = 'An N-dimensional, potentially multi-component, scientific ' + \
+        'image with origin, spacing, and direction metadata'
+
+    # Hold a reference to the source object to use with shallow views
+    _source_object = None
+
+    def _repr_keys(self):
+        assert False
+
+    def validate(self, obj, value):
+        self._source_object = value
+
+        if isinstance(value, xr.DataArray):
+            return value
+        if have_itk and isinstance(value, itk.Image):
+            image = itk.xarray_from_image(value)
+            component_type, pixel_type = _image_to_type(value)
+            image.attrs['pixel_type'] = pixel_type
+            image.attrs['component_type'] = component_type
+            return image
+        image = to_spatial_image(value)
+        return image
 
 def _image_to_type(itkimage):  # noqa: C901
     component = itk.template(itkimage)[1][0]
@@ -272,6 +305,110 @@ def itkimage_from_json(js, manager=None):
 itkimage_serialization = {
     'from_json': itkimage_from_json,
     'to_json': itkimage_to_json
+}
+
+def spatial_image_to_json(spatial_image, manager=None):
+    """Serialize a Python xarray.DataArray spatial image object.
+
+    Attributes of this dictionary are to be passed to the JavaScript itkimage
+    constructor.
+    """
+    if spatial_image is None:
+        return None
+    else:
+        _spatial_dims = {"x", "y", "z"}
+        spatial_dims = _spatial_dims.intersection(spatial_image.dims)
+        dimension = len(spatial_dims)
+        direction = np.eye(dimension)
+        if 'direction' in spatial_image.attrs:
+            direction = spatial_image.attrs['direction']
+        pixel_arr = spatial_image.values
+        component_type = 'uint8_t'
+        if 'component_type' in spatial_image.attrs:
+            component_type = spatial_image.attrs['component_type']
+        else:
+            _python_to_js = {
+                np.int8: 'int8_t',
+                np.uint8: 'uint8_t',
+                np.int16: 'int16_t',
+                np.uint16: 'uint16_t',
+                np.int32: 'int32_t',
+                np.uint32: 'uint32_t',
+                np.int64: 'int64_t',
+                np.uint64: 'uint64_t',
+                np.float32: 'float',
+                np.float64: 'double',
+                np.float_: 'double',
+                np.complex64: 'float',
+                np.complex128: 'double',
+                np.complex_: 'double',
+            }
+            component_type = _python_to_js[spatial_image.dtype.type]
+        if 'int64' in component_type:
+            # JavaScript does not yet support 64-bit integers well
+            if component_type == 'uint64_t':
+                pixel_arr = pixel_arr.astype(np.uint32)
+                component_type = 'uint32_t'
+            else:
+                pixel_arr = pixel_arr.astype(np.int32)
+                component_type = 'int32_t'
+        pixel_type = 1
+        components = 1
+        if 'pixel_type' in spatial_image.attrs:
+            pixel_type = spatial_image.attrs['pixel_type']
+        else:
+            if 'c' in spatial_image.dims:
+                pixel_type = 14
+                components = spatial_image.shape[spatial_image.dims.index('c')]
+        origin = [0.0]*dimension
+        spacing = [1.0]*dimension
+        size = [1]*dimension
+
+        spatial_dims = list(spatial_dims)
+        spatial_dims.sort()
+        spatial_dims.reverse()
+        for index, dim in enumerate(spatial_dims):
+            coords = spatial_image.coords[dim]
+            if coords.shape[0] > 1:
+                origin[index] = float(coords[0])
+                spacing[index] = float(coords[1]) - float(coords[0])
+            size[index] = spatial_image.shape[spatial_image.dims.index(dim)]
+        spacing.reverse()
+        origin.reverse()
+        size.reverse()
+        compressor = zstd.ZstdCompressor(level=3)
+        compressed = compressor.compress(pixel_arr.data)
+        pixel_arr_compressed = memoryview(compressed)
+        imageType = dict(
+            dimension=dimension,
+            componentType=component_type,
+            pixelType=pixel_type,
+            components=components,
+        )
+        return dict(
+            imageType=imageType,
+            origin=tuple(origin),
+            spacing=tuple(spacing),
+            size=tuple(size),
+            direction={'data': list(direction.flatten()),
+                       'rows': dimension,
+                       'columns': dimension},
+            compressedData=pixel_arr_compressed
+        )
+
+
+def spatial_image_from_json(js, manager=None):
+    """Deserialize a Javascript itk.js Image object."""
+    if js is None:
+        return None
+    else:
+        image = itkimage_from_json(js, manager)
+        da = itk.xarray_from_image(image)
+        return da
+
+spatial_image_serialization = {
+    'from_json': spatial_image_from_json,
+    'to_json': spatial_image_to_json
 }
 
 class ImagePoint(object):
