@@ -1,8 +1,12 @@
 {
   "name": "itkwidgets",
   "version": "0.32.0",
+  "homepage": "https://github.com/InsightSoftwareConsortium/itkwidgets",
   "description": "Interactive Jupyter widgets to visualize images in 2D and 3D",
-  "author": "Matthew McCormick",
+  "author": {
+    "name": "Matthew McCormick",
+    "email": "matt.mccormick@kitware.com"
+  },
   "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/InsightSoftwareConsortium/itkwidgets/issues"
