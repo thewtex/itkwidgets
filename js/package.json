@@ -85,6 +85,7 @@
   "dependencies": {
     "@babel/runtime": "^7.9.2",
     "@jupyter-widgets/base": "^1.1 || ^2 || ^3",
+    "@jupyterlab/application": "^3.0.9",
     "autoprefixer": "^9.7.6",
     "copy-webpack-plugin": "^5.1.1",
     "css-element-queries": "^1.2.3",
