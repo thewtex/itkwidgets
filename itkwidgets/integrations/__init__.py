@@ -124,7 +124,8 @@ def _get_viewer_image(image, label=False):
         ngff_image = to_ngff_image(image)
         multiscales = to_multiscales(ngff_image, method=method)
         to_ngff_zarr(store, multiscales, chunk_store=chunk_store)
-        return store
+        group = zarr.group(store)
+        return group
 
     raise RuntimeError("Could not process the viewer image")
 
