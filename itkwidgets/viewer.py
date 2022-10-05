@@ -13,6 +13,7 @@ from ._method_types import deferred_methods
 from .integrations import _detect_render_type, _get_viewer_image, _get_viewer_point_sets
 from .render_types import RenderType
 from .viewer_config import ITK_VIEWER_SRC, PYDATA_SPHINX_HREF, MUI_HREF
+from .imjoy import register_itkwasm_imjoy_codecs
 
 __all__ = [
     "Viewer",
@@ -91,6 +92,8 @@ class ViewerRPC:
                 result = data
             self.init_data[key] = result
 
+        register_itkwasm_imjoy_codecs()
+
         itk_viewer = await api.createWindow(
             name=f"itkwidgets viewer {_viewer_count}",
             type="itk-vtk-viewer",
@@ -104,6 +107,8 @@ class ViewerRPC:
         itk_viewer.registerEventListener(
             'renderedImageAssigned', self.set_event
         )
+
+        register_itkwasm_imjoy_codecs()
         # Once the viewer has been created any queued requests can be run
         asyncio.get_running_loop().call_soon_threadsafe(self.viewer_event.set)
 
