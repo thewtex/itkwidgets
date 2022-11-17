@@ -1,3 +1,4 @@
+import sys
 from enum import Enum
 from importlib import import_module
 
@@ -36,26 +37,27 @@ def find_env():
 
 ENVIRONMENT = find_env()
 
-if ENVIRONMENT is not Env.COLAB:
-    if ENVIRONMENT is Env.JUPYTER_NOTEBOOK:
-        try:
-            import imjoy_jupyter_extension
-        except:
-            raise RuntimeError('imjoy-jupyter-extension is required. `pip install itkwidgets[notebook]` and refresh page.')
-    else:
-        try:
-            import_module("imjoy-jupyterlab-extension")
-        except:
-            if ENVIRONMENT is Env.JUPYTERLITE:
-                print('imjoy-jupyterlab-extension is required')
-                raise RuntimeError('imjoy-jupyterlab-extension is required. Install the package and refresh page.')
-            else:
-                raise RuntimeError('imjoy-jupyterlab-extension is required. `pip install itkwidgets[lab]` and refresh page.')
+if sys.version_info.major == 3 and sys.version_info.minor >= 8:
+    if ENVIRONMENT is not Env.COLAB:
+        if ENVIRONMENT is Env.JUPYTER_NOTEBOOK:
+            try:
+                import imjoy_jupyter_extension
+            except:
+                raise RuntimeError('imjoy-jupyter-extension is required. `pip install itkwidgets[notebook]` and refresh page.')
+        else:
+            try:
+                import_module("imjoy-jupyterlab-extension")
+            except:
+                if ENVIRONMENT is Env.JUPYTERLITE:
+                    print('imjoy-jupyterlab-extension is required')
+                    raise RuntimeError('imjoy-jupyterlab-extension is required. Install the package and refresh page.')
+                else:
+                    raise RuntimeError('imjoy-jupyterlab-extension is required. `pip install itkwidgets[lab]` and refresh page.')
 
-try:
-    import imjoy_elfinder
-except:
-    if ENVIRONMENT is Env.JUPYTERLITE:
-        raise RuntimeError('imjoy-elfinder is required. Install the package and refresh page.')
-    else:
-        raise RuntimeError('imjoy-elfinder is required. `pip install imjoy-elfinder` and refresh page.')
+    try:
+        import imjoy_elfinder
+    except:
+        if ENVIRONMENT is Env.JUPYTERLITE:
+            raise RuntimeError('imjoy-elfinder is required. Install the package and refresh page.')
+        else:
+            raise RuntimeError('imjoy-elfinder is required. `pip install imjoy-elfinder` and refresh page.')
